@@ -1,3 +1,6 @@
+#ifndef UTILS_CUH
+#define UTILS_CUH
+
 #include <algorithm>
 #include <random>
 #include <numeric>
@@ -30,10 +33,10 @@ void fill_increment(float* ptr, int size) {
     std::iota(ptr, ptr + size, 1);
 }
 
-void fill_random(float* arr, int size) {
+void fill_random(float* arr, int size, float start, float end) {
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<> dis(0.5, 1.0);
+    std::uniform_real_distribution<> dis(start, end);
     std::generate(arr, arr + size, [&]() { return dis(gen); });
 }
 
@@ -45,6 +48,33 @@ void print(float* ptr, int r, int c) {
         std::cout << "\n";
     }
     std::cout << "\n";
+}
+
+void reference_gemm(int M, int N, int K, float* A, float* B, float* C) {
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            float tmp = 0.0;
+            for (int k = 0; k < K; k++) {
+                tmp += A[i * K + k] * B[k * N + j];
+            }
+            C[i * N + j] = tmp;
+        }
+    }
+}
+
+bool compare_matrices(float* A, float* B, int rows, int cols, float tol=0.00001) {
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            float diff = std::fabs(A[i * cols + j] - B[i * cols + j]);
+            if (diff > tol) {
+                printf("Mismatch at (%d, %d): A=%.6f, B=%.6f, Diff=%.6f\n", 
+                       i, j, A[i * cols + j], B[i * cols + j], diff);
+                return false;
+            }
+        }
+    }
+    printf("Success!\n");
+    return true;
 }
 
 void cudaDeviceInfo() {
@@ -83,29 +113,4 @@ void cudaDeviceInfo() {
     }
 }
 
-void reference_gemm(int M, int N, int K, float* A, float* B, float* C) {
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            float tmp = 0.0;
-            for (int k = 0; k < K; k++) {
-                tmp += A[i * K + k] * B[k * N + j];
-            }
-            C[i * N + j] = tmp;
-        }
-    }
-}
-
-bool compare_matrices(float* A, float* B, int rows, int cols, float tol=0.000001) {
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            float diff = std::fabs(A[i * cols + j] - B[i * cols + j]);
-            if (diff > tol) {
-                printf("Mismatch at (%d, %d): A=%.6f, B=%.6f, Diff=%.6f\n", 
-                       i, j, A[i * cols + j], B[i * cols + j], diff);
-                return false;
-            }
-        }
-    }
-    printf("Success!\n");
-    return true;
-}
+#endif

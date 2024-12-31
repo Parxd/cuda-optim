@@ -1,6 +1,0 @@
-
-        if (tile == 0) {
-            printf("Thread ID: (%d, %d) with A_tile Linear Index: (%d)\n", threadIdx.y, threadIdx.x, threadIdx.y * block_K + threadIdx.x);
-            printf("A_tile[%d] = %f\n", threadIdx.x * block_K + threadIdx.y, A_tile[threadIdx.x * block_K + threadIdx.y]);
-            printf("B_tile[%d] = %f\n", threadIdx.y * block_N + threadIdx.x, B_tile[threadIdx.y * block_N + threadIdx.x]);
-        }
