@@ -9,7 +9,7 @@ int main(int argc, char* argv[]) {
     int N = 512;
     int K = 512;
     bool time_flag = false;
-    bool verify_flag = false;
+    bool verify_flag = true;
     
     args::ArgumentParser parser("CUDA SGEMM Benchmarking");
     args::HelpFlag help(parser, "help", "display this help menu", {'h', "help"});

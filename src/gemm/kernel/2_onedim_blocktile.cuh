@@ -10,7 +10,7 @@ __global__ void onedim_blocktile(int M, int N, int K, float* A, float* B, float*
     int tiles = CEIL_DIV(K, block_K);
     float C_res[thread_M + 1] = {0.0f};  // store intermed. C column & cached B value in TMEM
     for (int tile = 0; tile < tiles; ++tile) {
-        // TODO: Simplify this complicated GMEM A indexing logic
+        // TODO: simplify this complicated GMEM A indexing logic
         A_tile[threadIdx.x * block_K + threadIdx.y] = A[(block_M * blockIdx.y + threadIdx.x) * K + (block_K * tile + threadIdx.y)];
         B_tile[threadIdx.y * block_N + threadIdx.x] = B[(block_K * tile + threadIdx.y) * N + global_idx];
         __syncthreads();
