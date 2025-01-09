@@ -23,6 +23,7 @@ void test_kernel(int kernel, int M, int N, int K, float* A, float* B, float* C, 
         break;
     case 10:
         launch_cublas(M, N, K, A, B, C, stream);
+        break;
     default:
         break;
     }

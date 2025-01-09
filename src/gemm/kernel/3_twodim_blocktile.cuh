@@ -1,7 +1,9 @@
+#include <assert.h>
 #include "../../utils.cuh"
 
 template <int block_M, int block_N, int block_K, int thread_M, int thread_N>
 __global__ void twodim_blocktile(int M, int N, int K, float* A, float* B, float* C) {
+    assert(blockDim.x * blockDim.y == block_M * block_N / (thread_M * thread_N));
     const int global_idx = threadIdx.x + blockIdx.x * blockDim.x;
     const int global_idy = threadIdx.y + blockIdx.y * blockDim.y;
     __shared__ float A_tile[block_M * block_K];
@@ -10,15 +12,21 @@ __global__ void twodim_blocktile(int M, int N, int K, float* A, float* B, float*
     float res[thread_M * thread_N] = {0.0};
     float A_register[thread_N] = {0.0};
     float B_register[thread_M] = {0.0};
+    // use compile-time values here instead to enable compiler optimizations
+    // const int load_K = (blockDim.x * blockDim.y) / block_K;
+    constexpr int load_K = ((block_M * block_N) / (thread_M * thread_N)) / block_K
+    constexpr int A_load_tiles = CEIL_DIV(block_M, load_K);
+    constexpr int B_load_tiles = CEIL_DIV(block_N, load_K);
     for (int tile = 0; tile < tiles; ++tile) {
-        const int load_K = (blockDim.x * blockDim.y) / block_K;
-        // TODO: Fill in tile load indexing (GMEM -> SMEM)
-        for (int load_tile = 0; load_tile < CEIL_DIV(block_M, load_K); ++load_tile) {
-            A_tile[ ] = A[ ];
+        for (int load_tile = 0; load_tile < A_load_tiles; ++load_tile) {
+            A_tile[(load_tile * load_K + threadIdx.y) * block_K + threadIdx.x] = 
+                A[(blockIdx.y * block_M + (load_tile * load_K + threadIdx.y)) * K + (tile * block_K + threadIdx.x)];
         }
-        for (int load_tile = 0; load_tile < CEIL_DIV(block_N, load_K); ++load_tile) {
-            B_tile[ ] = A[ ];
+        for (int load_tile = 0; load_tile < B_load_tiles; ++load_tile) {
+            B_tile[(load_tile * load_K + threadIdx.y) * block_N + threadIdx.y] =
+                B[(tile * block_K + (load_tile * load_K + threadIdx.y)) * N + (blockIdx.x * block_N + threadIdx.x)];
         }
+        __syncthreads();
     }
 }
 
@@ -28,5 +36,10 @@ void launch_twodim_blocktile(int M, int N, int K, float* A, float* B, float* C, 
     constexpr int block_K = 8;
     constexpr int thread_M = 8;
     constexpr int thread_N = 8;
-    twodim_blocktile<block_M, block_N, block_K, thread_M, thread_N>;
+    assert(block_M / thread_M == block_N / thread_N);
+    assert(block_M / thread_M == block_K);
+
+    dim3 blockDim{};
+    dim3 gridDim{};
+    twodim_blocktile<block_M, block_N, block_K, thread_M, thread_N><<<gridDim, blockDim, 0, stream>>>(M, N, K, A, B, C);
 }
