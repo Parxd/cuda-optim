@@ -29,8 +29,8 @@ void fill_ones(float* ptr, int size) {
     std::fill(ptr, ptr + size, float(1.0));
 }
 
-void fill_increment(float* ptr, int size) {
-    std::iota(ptr, ptr + size, 1);
+void fill_increment(float* ptr, int size, int start = 1) {
+    std::iota(ptr, ptr + size, start);
 }
 
 void fill_random(float* arr, int size, float start, float end) {

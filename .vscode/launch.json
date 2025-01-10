@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug CUDA Program",
+            "type": "cuda-gdb",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/gemm/main",
+            "args": ["-k 3 -v 1"],
+            "cwd": "${workspaceFolder}",
+            "environment": []
+        }
+    ]
+}
