@@ -6,7 +6,7 @@
             "type": "shell",
             "command": "/usr/local/cuda/bin/nvcc",
             "args": [
-                "-g", "-G",
+                // "-g", "-G",
                 "-o", "${workspaceFolder}/bin/main",
                 "${workspaceFolder}/src/gemm/main.cu",
                 "-lcublas"

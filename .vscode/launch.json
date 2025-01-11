@@ -5,8 +5,8 @@
             "name": "Debug CUDA Program",
             "type": "cuda-gdb",
             "request": "launch",
-            "program": "${workspaceFolder}/src/gemm/main",
-            "args": ["-k 3 -v 1"],
+            "program": "${workspaceFolder}/bin/main",
+            "args": ["-k 3 -v 1 8 8 8"],
             "cwd": "${workspaceFolder}",
             "environment": []
         }

@@ -59,8 +59,8 @@ int main(int argc, char* argv[]) {
     float *d_A, *d_B, *d_C;
     auto A = new float[M * K];
     auto B = new float[K * N];
-    fill_random(A, M * K, 0.1, 0.5);
-    fill_random(B, K * N, 0.1, 0.5);
+    fill_random(A, M * K, 0.1, 0.3);
+    fill_random(B, K * N, 0.1, 0.3);
     
     auto C = new float[M * N];
     auto A_size = sizeof(float) * M * K;

@@ -23,8 +23,8 @@ __global__ void twodim_blocktile(int M, int N, int K, float* A, float* B, float*
                 A[(blockIdx.y * block_M + (load_tile * load_K + threadIdx.y)) * K + (tile * block_K + threadIdx.x)];
         }
         for (int load_tile = 0; load_tile < B_load_tiles; ++load_tile) {
-            B_tile[(load_tile * load_K + threadIdx.y) * block_N + threadIdx.x] =
-                B[(tile * block_K + (load_tile * load_K + threadIdx.y)) * N + (blockIdx.x * block_N + threadIdx.x)];
+            B_tile[threadIdx.y * block_N + (load_tile * load_K + threadIdx.x)] =
+                B[(tile * block_K + threadIdx.y) * N + (blockIdx.x * block_N + (load_tile * load_K + threadIdx.x))];
         }
         __syncthreads();
         for (int k = 0; k < block_K; ++k) {
@@ -58,7 +58,8 @@ void launch_twodim_blocktile(int M, int N, int K, float* A, float* B, float* C, 
     assert(block_M / thread_M == block_N / thread_N);
     assert(block_M / thread_M == block_K);
 
-    dim3 blockDim( );
+    dim3 blockDim(block_M / thread_M, block_N / thread_N);
     dim3 gridDim(CEIL_DIV(M, block_M), CEIL_DIV(N, block_N));
     twodim_blocktile<block_M, block_N, block_K, thread_M, thread_N><<<gridDim, blockDim, 0, stream>>>(M, N, K, A, B, C);
+    CUDA_CHECK(cudaGetLastError());
 }
