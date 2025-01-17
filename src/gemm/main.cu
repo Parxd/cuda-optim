@@ -59,8 +59,10 @@ int main(int argc, char* argv[]) {
     float *d_A, *d_B, *d_C;
     auto A = new float[M * K];
     auto B = new float[K * N];
-    fill_random(A, M * K, 0.1, 0.3);
-    fill_random(B, K * N, 0.1, 0.3);
+    // fill_random(A, M * K, 0.1, 0.3);
+    // fill_random(B, K * N, 0.1, 0.3);
+    fill_increment(A, M * K);
+    fill_increment(B, K * N);
     
     auto C = new float[M * N];
     auto A_size = sizeof(float) * M * K;
@@ -71,7 +73,7 @@ int main(int argc, char* argv[]) {
     cudaMallocAsync((void**)&d_C, C_size, stream);
     cudaMemcpyAsync(d_A, A, A_size, cudaMemcpyHostToDevice, stream);
     cudaMemcpyAsync(d_B, B, B_size, cudaMemcpyHostToDevice, stream);
-
+    
     test_kernel(kernel_id, M, N, K, d_A, d_B, d_C, stream);
     cudaMemcpyAsync(C, d_C, C_size, cudaMemcpyDeviceToHost, stream);
     cudaStreamSynchronize(stream);
