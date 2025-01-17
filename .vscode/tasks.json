@@ -7,8 +7,8 @@
             "command": "/usr/local/cuda/bin/nvcc",
             "args": [
                 "-g", "-G",
-                "-o", "${workspaceFolder}/bin/main",
-                "${workspaceFolder}/src/gemm/main.cu",
+                "-o", "${workspaceFolder}/bin/gemm_debug",
+                "${workspaceFolder}/src/gemm/gemm.cu",
                 "-lcublas"
             ],
             "group": {
@@ -17,6 +17,22 @@
             },
             "problemMatcher": [],
             "detail": "Builds the CUDA program with debugging enabled."
+        },
+        {
+            "label": "Build CUDA Executable",
+            "type": "shell",
+            "command": "/usr/local/cuda/bin/nvcc",
+            "args": [
+                "-o", "${workspaceFolder}/bin/gemm",
+                "${workspaceFolder}/src/gemm/gemm.cu",
+                "-lcublas"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [],
+            "detail": "Builds the CUDA program with debugging disabled."
         }
     ]
 }

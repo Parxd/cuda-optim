@@ -14,7 +14,7 @@
     do {                                                            \
         cudaError_t err = call;                                     \
         if (err != cudaSuccess) {                                   \
-            std::cerr << "CUDA Error in " << __FILE__               \
+            std::cerr << "CUDA Error " << err << " in " << __FILE__ \
                       << " at line " << __LINE__ << ": "            \
                       << cudaGetErrorString(err) << std::endl;      \
             exit(EXIT_FAILURE);                                     \
