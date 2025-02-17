@@ -1,6 +1,7 @@
  #include <cooperative_groups.h>
 
 namespace cg = cooperative_groups;
+// TODO: add loop unroll directives
 
 template <int BM, int BN, int BK,
           int WM, int WN>
@@ -43,15 +44,14 @@ __device__ void ld_global2shared(
 }
 
 template <int BM, int BN, int BK,
-          int WM, int WN, int WK,
-          int WIM, int WIN,
-          int TM, int TN, int TK>
+          int WM, int WN, int WIM, int WIN,
+          int TM, int TN>
 __device__ void ld_shared2reg_mma(
-    const cg::thread_block_tile<32, cg::thread_block>& warp, int warp_k, float* sA, float* sB, float* rA, float* rB
+    const cg::thread_block_tile<32, cg::thread_block>& warp, int warp_k, float* sA, float* sB, float* rA, float* rB, float* rC
 ) {
     // tile CTA-level C with (warp_rows, warp_cols) layout of warps
     // assert(warp_rows * warp_cols == warp.meta_group_size())
-    constexpr int warp_rows = BM / WM;
+    [[maybe_unused]] constexpr int warp_rows = BM / WM;
     constexpr int warp_cols = BN / WN;
     // which warp are we in?
     const int warp_m = warp.meta_group_rank() / warp_cols;
@@ -60,26 +60,37 @@ __device__ void ld_shared2reg_mma(
     for (int warp_iter_m = 0; warp_iter_m < WIM; ++warp_iter_m) {
         for (int thread_m = 0; thread_m < TM; ++thread_m) {
             rA[warp_iter_m * TM + thread_m] = 
-                sA[warp_k * BM + (warp_m * WM + (warp_iter_m * WIM + thread_m))];
+                sA[warp_k * BM + (warp_m * WM + (warp_iter_m * (TM * 8) + thread_m))];
         }
     }
     // ld sB -> rB
     for (int warp_iter_n = 0; warp_iter_n < WIN; ++warp_iter_n) {
         for (int thread_n = 0; thread_n < TN; ++thread_n) {
             rB[warp_iter_n * TN + thread_n] = 
-                sB[warp_k * BN + (warp_n * WN + (warp_iter_n * WIN + thread_n))];
+                sB[warp_k * BN + (warp_n * WN + (warp_iter_n * (TN * 4) + thread_n))];
         }
     }
     // mma
-    for (int warp_iter_n = 0; warp_iter_n < WIN; ++warp_iter_n) {
-        for (int warp_iter_m = 0; warp_iter_m < WIM; ++warp_iter_m) {
-            for (int thread_n = 0; thread_n < TN; ++thread_n) {
-                for (int thread_m = 0; thread_m < TM; ++thread_m) {
-                    
+    for (int warp_iter_m = 0; warp_iter_m < WIM; ++warp_iter_m) {
+        for (int warp_iter_n = 0; warp_iter_n < WIN; ++warp_iter_n) {
+            for (int thread_m = 0; thread_m < TM; ++thread_m) {
+                for (int thread_n = 0; thread_n < TN; ++thread_n) {
+                    // rC of shape (TM * WIM, TN * WIN)
+                    rC[(warp_iter_m * TM + thread_m) * (TN * WIN) + (warp_iter_n * TN + thread_n)] += 
+                        rA[warp_iter_m * TM + thread_m] * rB[warp_iter_n * TN + thread_n];
                 }
             }
         }
     }
+}
+
+template <int BM, int BN, int BK,
+          int WM, int WN, int WIM, int WIN,
+          int TM, int TN>
+__device__ void st_reg2global(
+    
+) {
+    
 }
 
 template <int BM, int BN, int BK,
@@ -99,12 +110,16 @@ __global__ void warptile(int M, int N, int K, float* A, float* B, float* C) {
     for (int tile = 0; tile < tiles; ++tile) {
         ld_global2shared<BM, BN, BK, WM, WN>(cta, tile, M, N, K, A, B, A_tile, B_tile);
         cta.sync();
-        
         for (int warp_k = 0; warp_k < BK; ++warp_k) {
-            ld_shared2reg_mma<BM, BN, BK, WM, WN, WK, WIM, WIN, TM, TN, TK>(
-                warp, warp_k, A_tile, B_tile, A_register, B_register
+            ld_shared2reg_mma<BM, BN, BK, WM, WN, WIM, WIN, TM, TN>(
+                warp, warp_k, A_tile, B_tile, A_register, B_register, res
             );
         }
+        cta.sync();
+        // st rC -> sC -> gC
+        st_reg2global<BM, BN, BK, WM, WN, WIM, WIN, TM, TN>(
+            
+        );
     }
 }
 
