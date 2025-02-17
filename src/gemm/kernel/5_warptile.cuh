@@ -1,4 +1,4 @@
-#include <cooperative_groups.h>
+ #include <cooperative_groups.h>
 
 namespace cg = cooperative_groups;
 
@@ -46,24 +46,39 @@ template <int BM, int BN, int BK,
           int WM, int WN, int WK,
           int WIM, int WIN,
           int TM, int TN, int TK>
-__device__ void ld_shared2reg(
-    const cg::thread_block_tile<32, cg::thread_block>& warp, float* sA, float* sB, float* rA, float* rB
+__device__ void ld_shared2reg_mma(
+    const cg::thread_block_tile<32, cg::thread_block>& warp, int warp_k, float* sA, float* sB, float* rA, float* rB
 ) {
-    constexpr int warps_per_row = BK / WK;
-    constexpr int warps_per_col = BM / WM;
-    const int warp_row = warp.meta_group_rank() / warps_per_row;
-    const int warp_col = warp.meta_group_rank() % warps_per_row;
-    
-    const int ld_cols = WK / 4;
-    
-    
-    // sA -> rA
-    for (int ld = 0; ld < WIM; ++ld) {
-        
+    // tile CTA-level C with (warp_rows, warp_cols) layout of warps
+    // assert(warp_rows * warp_cols == warp.meta_group_size())
+    constexpr int warp_rows = BM / WM;
+    constexpr int warp_cols = BN / WN;
+    // which warp are we in?
+    const int warp_m = warp.meta_group_rank() / warp_cols;
+    const int warp_n = warp.meta_group_rank() % warp_cols;
+    // ld sA -> rA
+    for (int warp_iter_m = 0; warp_iter_m < WIM; ++warp_iter_m) {
+        for (int thread_m = 0; thread_m < TM; ++thread_m) {
+            rA[warp_iter_m * TM + thread_m] = 
+                sA[warp_k * BM + (warp_m * WM + (warp_iter_m * WIM + thread_m))];
+        }
     }
-    // sB -> rB
-    for (int ld = 0; ld < WIN; ++ld) {
-        
+    // ld sB -> rB
+    for (int warp_iter_n = 0; warp_iter_n < WIN; ++warp_iter_n) {
+        for (int thread_n = 0; thread_n < TN; ++thread_n) {
+            rB[warp_iter_n * TN + thread_n] = 
+                sB[warp_k * BN + (warp_n * WN + (warp_iter_n * WIN + thread_n))];
+        }
+    }
+    // mma
+    for (int warp_iter_n = 0; warp_iter_n < WIN; ++warp_iter_n) {
+        for (int warp_iter_m = 0; warp_iter_m < WIM; ++warp_iter_m) {
+            for (int thread_n = 0; thread_n < TN; ++thread_n) {
+                for (int thread_m = 0; thread_m < TM; ++thread_m) {
+                    
+                }
+            }
+        }
     }
 }
 
@@ -85,9 +100,11 @@ __global__ void warptile(int M, int N, int K, float* A, float* B, float* C) {
         ld_global2shared<BM, BN, BK, WM, WN>(cta, tile, M, N, K, A, B, A_tile, B_tile);
         cta.sync();
         
-        ld_shared2reg<BM, BN, BK, WM, WN, WK, WIM, WIN, TM, TN, TK>(
-            warp, A_tile, B_tile, A_register, B_register
-        );
+        for (int warp_k = 0; warp_k < BK; ++warp_k) {
+            ld_shared2reg_mma<BM, BN, BK, WM, WN, WK, WIM, WIN, TM, TN, TK>(
+                warp, warp_k, A_tile, B_tile, A_register, B_register
+            );
+        }
     }
 }
 
@@ -101,13 +118,13 @@ __host__ inline void launch_warptile(int M, int N, int K, float* A, float* B, fl
     constexpr int WN = 64;
     constexpr int WK = 1;
     // thread-tile size
-    constexpr int TM = 16;
+    constexpr int TM = 4;
     constexpr int TN = 8;
     constexpr int TK = 1;
     // iters. over warp-tile
     // assume arbitrary (4, 8) thread layout in warp
-    constexpr int WIM = TM * 4 / WM;
-    constexpr int WIN = TN * 8 / WN;
+    constexpr int WIM = WM / (TM * 8);
+    constexpr int WIN = WN / (TN * 4);
     
     constexpr int threads_per_cta = (BM * BN) / (WM * WN) * 32;
     
