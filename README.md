@@ -8,7 +8,9 @@ Kernels 0 through 5 are written in pure CUDA C++, but following kernels use eith
 
 *Note: Kernels 0 through 4 have lots of hard-coded kernel launch parameters and messy code, as they were mostly for demonstration and learning general good GEMM concepts (block/thread-tiling). As a result, there is also no bounds checking for kernels 2 through 4, so they are no guarantees for correctness when using non-square `M`, `N`, `K` dimensions that aren't multiples of `64` (i.e. =/= 64, 128, 192, etc.).*
 
-I would recommend looking at Kernels 5 and above for far cleaner (and performant) code. 
+Kernels 5 and above have far cleaner (and performant) code.
+The general approach used for these kernels (CTA-tiling, warp-tiling, thread-tiling) can be visualized with this diagram from NVIDIA's CUTLASS...
+![img](res/3.png)
 
 The following performance tests were run on my RTX 3070 Mobile for `M = N = K = 512`.
 
@@ -34,3 +36,4 @@ The following performance tests were run on my RTX 3070 Mobile for `M = N = K = 
     
 - Kernel 5: [SMEM Blocktiling + Warptiling + Threadtiling + Vectorized Transactions](src/gemm/kernel/5_warptile.cuh)
     - Time:
+    - GFLOPs: 
