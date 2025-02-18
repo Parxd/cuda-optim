@@ -1,0 +1,4 @@
+CompileFlags:
+  Add:
+    - -I/home/parxed/code/cuda-optim/cutlass/include/
+    - -I/home/parxed/code/cuda-optim/cutlass/tools/util/include/
