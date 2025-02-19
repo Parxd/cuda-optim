@@ -1,4 +1,4 @@
-#include "../../utils.cuh"
+#include "../../utils.hh"
 
 template <int tile_size>
 __global__ void shared_mem(int M, int N, int K, float* A, float* B, float* C) {

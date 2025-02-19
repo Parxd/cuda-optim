@@ -1,14 +1,15 @@
 #ifndef KERNELS_CUH
 #define KERNELS_CUH
 
-#include "kernel/0_naive.cuh"
-#include "kernel/1_shared_mem.cuh"
-#include "kernel/2_onedim_blocktile.cuh"
-#include "kernel/3_twodim_blocktile.cuh"
-#include "kernel/4_twodim_blocktile_vectorized.cuh"
-#include "kernel/x_cublas.cuh"
+#include "kernel/0_naive.hh"
+#include "kernel/1_smem.hh"
+#include "kernel/2_1dim_threadtile.hh"
+#include "kernel/3_2dim_threadtile.hh"
+#include "kernel/4_vectorize.hh"
+#include "kernel/5_warptile.hh"
+#include "kernel/x_cublas.hh"
 
-void test_kernel(int kernel, int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
+inline void test_kernel(int kernel, int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
     switch (kernel) {
     case 0:
         launch_naive(M, N, K, A, B, C, stream);
@@ -24,6 +25,9 @@ void test_kernel(int kernel, int M, int N, int K, float* A, float* B, float* C, 
         break;
     case 4:
         launch_twodim_blocktile_vectorized(M, N, K, A, B, C, stream);
+        break;
+    case 5:
+        launch_warptile(M, N, K, A, B, C, stream);
         break;
     case 10:
         launch_cublas(M, N, K, A, B, C, stream);

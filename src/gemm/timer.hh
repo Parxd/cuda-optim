@@ -1,7 +1,6 @@
-#include "kernels.cuh"
-#include "../utils.cuh"
+#include "kernels.hh"
 
-int time_kernel(int kernel_num,
+inline int time_kernel(int kernel_num,
          int M, int N, int K,
          float* A, float* B, float* C,
          cudaStream_t stream,

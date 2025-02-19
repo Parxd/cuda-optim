@@ -1,4 +1,4 @@
-#include "../../utils.cuh"
+#include "../../utils.hh"
 
 __global__ void naive(int M, int N, int K, float* A, float* B, float* C) {
     int idx = threadIdx.x + blockIdx.x * blockDim.x;

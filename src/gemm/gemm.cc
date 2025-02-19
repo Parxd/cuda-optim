@@ -1,7 +1,7 @@
-#include "kernels.cuh"
-#include "../utils.cuh"
+#include "kernels.hh"
+#include "../utils.hh"
 #include "../arg_parser.h"
-#include "timer.cuh"
+#include "timer.hh"
 
 int main(int argc, char* argv[]) {
     int kernel_id = 0;
@@ -59,12 +59,12 @@ int main(int argc, char* argv[]) {
     float *d_A, *d_B, *d_C;
     auto A = new float[M * K];
     auto B = new float[K * N];
-    fill_random(A, M * K, 0.1, 0.3);
-    fill_random(B, K * N, 0.1, 0.3);
-
+    // fill_random(A, M * K, 0.1, 0.3);
+    // fill_random(B, K * N, 0.1, 0.3);
+    
     // for debug build
-    // fill_increment(A, M * K);
-    // fill_increment(B, K * N);
+    fill_increment(A, M * K);
+    fill_increment(B, K * N);
     
     auto C = new float[M * N];
     auto A_size = sizeof(float) * M * K;

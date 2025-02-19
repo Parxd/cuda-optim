@@ -5,8 +5,11 @@ namespace cg = cooperative_groups;
 
 template <int BM, int BN, int BK,
           int WM, int WN>
-__device__ void ld_global2shared(
-    const cg::thread_block& cta, int tile, int M, int N, int K, float* gA, float* gB, float* sA, float* sB
+__device__ inline void ld_global2shared(
+    const cg::thread_block& cta,
+    const int tile,
+    const int M, const int N, const int K,
+    float* gA, float* gB, float* sA, float* sB
 ) {
     const int thr_id = cta.thread_rank();
     const int cta_id = cta.group_index().x;
@@ -46,10 +49,15 @@ __device__ void ld_global2shared(
 template <int BM, int BN, int BK,
           int WM, int WN, int WIM, int WIN,
           int TM, int TN>
-__device__ void ld_shared2reg_mma(
-    const cg::thread_block_tile<32, cg::thread_block>& warp, int warp_k, float* sA, float* sB, float* rA, float* rB, float* rC
+__device__ inline void ld_shared2reg_mma(
+    const cg::thread_block_tile<32, cg::thread_block>& warp,
+    const int warp_k,
+    float* sA, float* sB,
+    float* rA, float* rB,
+    float* rC
 ) {
-    // tile CTA-level C with (warp_rows, warp_cols) layout of warps
+    const int thr_id = warp.thread_rank();
+    // tile CTA-level with (warp_rows, warp_cols) layout of warps
     // assert(warp_rows * warp_cols == warp.meta_group_size())
     [[maybe_unused]] constexpr int warp_rows = BM / WM;
     constexpr int warp_cols = BN / WN;
@@ -87,10 +95,37 @@ __device__ void ld_shared2reg_mma(
 template <int BM, int BN, int BK,
           int WM, int WN, int WIM, int WIN,
           int TM, int TN>
-__device__ void st_reg2global(
-    
+__device__ inline void st_reg2global(
+    const cg::thread_block& cta, 
+    const cg::thread_block_tile<32, cg::thread_block>& warp,
+    const int tile,
+    const int M, const int N, const int K,
+    float* gC, float* rC
 ) {
+    const int cta_thr_id = cta.thread_rank();
+    const int cta_id = cta.group_index().x;
+    const int cta_row = cta_id / (N / BN);
+    const int cta_col = cta_id % (N / BN);
     
+    const int warp_thr_id = warp.thread_rank();
+    constexpr int warp_cols = BN / WN;
+    const int warp_m = warp.meta_group_rank() / warp_cols;
+    const int warp_n = warp.meta_group_rank() % warp_cols;
+    
+    for (int warp_iter_m = 0; warp_iter_m < WIM; ++warp_iter_m) {
+        for (int warp_iter_n = 0; warp_iter_n < WIN; ++warp_iter_n) {
+            // mapping layouts (TM, TN) -> (TM, TN / 4)
+            for (int thread_m = 0; thread_m < TM; ++thread_m) {
+                for (int thread_n = 0; thread_n < TN; ++thread_n) {
+                    // auto st = reinterpret_cast<float4*>(
+                        
+                    // );
+                    const int st_idx = (cta_row * BM + (warp_m * WM + (warp_iter_m * (TM * 8) + thread_m))) * K +
+                                        (cta_col * BN + (warp_n * WN + (warp_iter_n * (TN * 4) + (thread_n * 4))));
+                }
+            }
+        }
+    }
 }
 
 template <int BM, int BN, int BK,
@@ -103,7 +138,7 @@ __global__ void warptile(int M, int N, int K, float* A, float* B, float* C) {
     float A_register[TM * TK * WIM] = {0.0};
     float B_register[TK * TN * WIN] = {0.0};
     float res[TM * TN * WIM * WIN] = {0.0};
-    
+     
     const int tiles = K / BK;
     auto cta = cg::this_thread_block();
     auto warp = cg::tiled_partition<32, cg::thread_block>(cta);
@@ -116,9 +151,9 @@ __global__ void warptile(int M, int N, int K, float* A, float* B, float* C) {
             );
         }
         cta.sync();
-        // st rC -> sC -> gC
+        // st rC -> gC
         st_reg2global<BM, BN, BK, WM, WN, WIM, WIN, TM, TN>(
-            
+            cta, warp, tile, M, N, K, C, res
         );
     }
 }
@@ -141,10 +176,12 @@ __host__ inline void launch_warptile(int M, int N, int K, float* A, float* B, fl
     constexpr int WIM = WM / (TM * 8);
     constexpr int WIN = WN / (TN * 4);
     
-    constexpr int threads_per_cta = (BM * BN) / (WM * WN) * 32;
-    
-    static_assert(WK >= TK);
     // TODO: need more static asserts here
+    static_assert(WK >= TK);
+    static_assert(WM >= TM * WIM * 32);
+    static_assert(WN >= TN * WIN * 32);
+    
+    constexpr int threads_per_cta = (BM * BN) / (WM * WN) * 32;
     dim3 block_dim(threads_per_cta);
     dim3 grid_dim((M / BM) * (N / BN));
     warptile<BM, BN, BK, WM, WN, WK, WIM, WIN, TM, TN, TK>

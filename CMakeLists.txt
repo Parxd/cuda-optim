@@ -1,30 +1,31 @@
 cmake_minimum_required(VERSION 3.28)
 project(cuda-optim LANGUAGES CXX CUDA)
+find_package(CUDAToolkit REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES 80)
-set(CUDA_ARCH "80" CACHE STRING "CUDA architecture")
 
-find_package(CUDAToolkit REQUIRED)
-# set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/debug)
-# set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/release)
+set(CMAKE_CXX_FLAGS_DEBUG_INIT "-g -G")
+# clangd doesn't understand a lot of nvcc flags, avoid compile_commands.json for now
+set(CMAKE_EXPORT_COMPILE_COMMANDS OFF)
 
 set(
     GEMM_SRC
-    src/gemm/gemm.cu
-    src/gemm/kernel/0_naive.cuh
-    src/gemm/kernel/1_shared_mem.cuh
-    src/gemm/kernel/2_onedim_blocktile.cuh
-    src/gemm/kernel/3_twodim_blocktile.cuh
-    src/gemm/kernel/4_twodim_blocktile_vectorized.cuh
-    src/gemm/kernel/x_cublas.cuh
-    src/gemm/kernels.cuh
-    src/gemm/timer.cuh
+    src/gemm/gemm.cc
+    src/gemm/kernel/0_naive.hh
+    src/gemm/kernel/1_smem.hh
+    src/gemm/kernel/2_1dim_threadtile.hh
+    src/gemm/kernel/3_2dim_threadtile.hh
+    src/gemm/kernel/4_vectorize.hh
+    src/gemm/kernel/5_warptile.hh
+    src/gemm/kernel/x_cublas.hh
+    src/gemm/kernels.hh
+    src/gemm/timer.hh
 )
 set(
     GENERAL_SRC
-    src/utils.cuh
+    src/utils.hh
     src/arg_parser.h
 )
 set(
@@ -34,11 +35,9 @@ set(
 )
 
 add_executable(gemm ${GEMM_SRC} ${GENERAL_SRC})
+target_compile_options(gemm PRIVATE --expt-relaxed-constexpr)
+
+target_link_libraries(gemm PRIVATE -lcublas)
 target_include_directories(gemm PRIVATE ${CUTLASS_INCL} ${WORKING_DIRECTORY}/src)
 
-set_target_properties(gemm PROPERTIES CUDA_ARCHITECTURES native)
-target_compile_options(gemm PRIVATE --expt-relaxed-constexpr -gencode arch=compute_${CUDA_ARCH},code=sm_${CUDA_ARCH})
-
 set_target_properties(gemm PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(gemm PRIVATE CUDA::cublas)
-set_target_properties(gemm PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

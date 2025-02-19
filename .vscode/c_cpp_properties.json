@@ -3,11 +3,11 @@
         {
             "name": "Linux",
             "includePath": [
-                "${workspaceFolder}/**",
+                "${workspaceFolder}/**"
                 // CUTLASS includes
-                "${workspaceFolder}/cutlass/include",
-                "${workspaceFolder}/cutlass/tools/util/include",
-                "${workspaceFolder}/cutlass/examples/common"
+                // "${workspaceFolder}/cutlass/include",
+                // "${workspaceFolder}/cutlass/tools/util/include",
+                // "${workspaceFolder}/cutlass/examples/common"
             ],
             "defines": [
                 "__CUDACC_VER_MAJOR__=12",

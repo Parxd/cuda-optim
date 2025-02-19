@@ -1,4 +1,4 @@
-#include "../../utils.cuh"
+#include "../../utils.hh"
 
 template <int block_M, int block_N, int block_K, int thread_M>
 __global__ void onedim_blocktile(int M, int N, int K, float* A, float* B, float* C) {

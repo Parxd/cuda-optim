@@ -1,5 +1,5 @@
 #include <assert.h>
-#include "../../utils.cuh"
+#include "../../utils.hh"
 
 template <int block_M, int block_N, int block_K, int thread_M, int thread_N>
 __global__ void twodim_blocktile(int M, int N, int K, float* A, float* B, float* C) {

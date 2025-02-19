@@ -7,7 +7,7 @@
             "command": "/usr/local/cuda/bin/nvcc",
             "args": [
                 "-g", "-G",
-                "-o", "${workspaceFolder}/bin/gemm_debug",
+                "-o", "${workspaceFolder}/build/gemm_debug",
                 "${workspaceFolder}/src/gemm/gemm.cu",
                 "-lcublas"
             ],
