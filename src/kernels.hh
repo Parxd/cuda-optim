@@ -1,5 +1,5 @@
-#ifndef KERNELS_CUH
-#define KERNELS_CUH
+#ifndef KERNELS_HH
+#define KERNELS_HH
 
 #include "kernel/0_naive.hh"
 #include "kernel/1_smem.hh"
@@ -15,16 +15,16 @@ inline void test_kernel(int kernel, int M, int N, int K, float* A, float* B, flo
         launch_naive(M, N, K, A, B, C, stream);
         break;
     case 1:
-        launch_shared_mem(M, N, K, A, B, C, stream);
+        launch_smem(M, N, K, A, B, C, stream);
         break;
     case 2:
-        launch_onedim_blocktile(M, N, K, A, B, C, stream);
+        launch_onedim_threadtile(M, N, K, A, B, C, stream);
         break;
     case 3:
-        launch_twodim_blocktile(M, N, K, A, B, C, stream);
+        launch_twodim_threadtile(M, N, K, A, B, C, stream);
         break;
     case 4:
-        launch_twodim_blocktile_vectorized(M, N, K, A, B, C, stream);
+        launch_vectorize(M, N, K, A, B, C, stream);
         break;
     case 5:
         launch_warptile(M, N, K, A, B, C, stream);

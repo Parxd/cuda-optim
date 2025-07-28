@@ -1,8 +1,8 @@
 #include <assert.h>
-#include "../../utils.hh"
+#include "../utils.hh"
 
 template <int block_M, int block_N, int block_K, int thread_M, int thread_N>
-__global__ void twodim_blocktile(int M, int N, int K, float* A, float* B, float* C) {
+__global__ void twodim_threadtile(int M, int N, int K, float* A, float* B, float* C) {
     assert(blockDim.x * blockDim.y == block_M * block_N / (thread_M * thread_N));
     const int global_idx = blockIdx.x * blockDim.x + threadIdx.x;
     const int global_idy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -49,7 +49,7 @@ __global__ void twodim_blocktile(int M, int N, int K, float* A, float* B, float*
     }
 }
 
-void launch_twodim_blocktile(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
+void inline launch_twodim_threadtile(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
     constexpr int block_M = 64;
     constexpr int block_N = 64;
     constexpr int block_K = 8;
@@ -60,6 +60,6 @@ void launch_twodim_blocktile(int M, int N, int K, float* A, float* B, float* C, 
 
     dim3 blockDim(block_M / thread_M, block_N / thread_N);
     dim3 gridDim(CEIL_DIV(M, block_M), CEIL_DIV(N, block_N));
-    twodim_blocktile<block_M, block_N, block_K, thread_M, thread_N><<<gridDim, blockDim, 0, stream>>>(M, N, K, A, B, C);
+    twodim_threadtile<block_M, block_N, block_K, thread_M, thread_N><<<gridDim, blockDim, 0, stream>>>(M, N, K, A, B, C);
     CUDA_CHECK(cudaGetLastError());
 }

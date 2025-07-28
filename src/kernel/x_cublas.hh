@@ -1,7 +1,7 @@
 #include <cublas_v2.h>
 
 // final boss
-void launch_cublas(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
+void inline launch_cublas(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
     cublasHandle_t handle;
     cublasCreate(&handle);
     cublasSetStream(handle, stream);

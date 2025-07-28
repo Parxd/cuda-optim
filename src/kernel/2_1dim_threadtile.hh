@@ -1,7 +1,7 @@
-#include "../../utils.hh"
+#include "../utils.hh"
 
 template <int block_M, int block_N, int block_K, int thread_M>
-__global__ void onedim_blocktile(int M, int N, int K, float* A, float* B, float* C) {
+__global__ void onedim_threadtile(int M, int N, int K, float* A, float* B, float* C) {
     // TODO: add assertions for kernel launch parameters
     const int global_idx = threadIdx.x + blockIdx.x * blockDim.x;
     const int global_idy = threadIdx.y + blockIdx.y * blockDim.y;
@@ -28,13 +28,13 @@ __global__ void onedim_blocktile(int M, int N, int K, float* A, float* B, float*
     }
 }
 
-void launch_onedim_blocktile(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
+void inline launch_onedim_threadtile(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
     constexpr int block_M = 64;
     constexpr int block_N = 64;
     constexpr int block_K = 8;
     constexpr int thread_M = 8;
     dim3 gridDim(CEIL_DIV(M, block_M), CEIL_DIV(N, block_N));
     dim3 blockDim(block_N, block_M / thread_M);
-    onedim_blocktile<block_M, block_N, block_K, thread_M><<<gridDim, blockDim, 0, stream>>>(M, N, K, A, B, C);
+    onedim_threadtile<block_M, block_N, block_K, thread_M><<<gridDim, blockDim, 0, stream>>>(M, N, K, A, B, C);
     CUDA_CHECK(cudaGetLastError());
 }

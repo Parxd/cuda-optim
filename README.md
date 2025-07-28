@@ -16,7 +16,7 @@ The following performance tests were run on my RTX 3070 Mobile for `M = N = K = 
 
 - Kernel 0: [Naive](src/gemm/kernel/0_naive.cuh)
     - Time: 
-    - GFLOPs: 
+    - G                           s: 
 
 - Kernel 1: [SMEM Blocktiling](src/gemm/kernel/1_shared_mem.cuh)
     - Time: 

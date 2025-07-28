@@ -1,5 +1,5 @@
-#ifndef UTILS_CUH
-#define UTILS_CUH
+#ifndef UTILS_HH
+#define UTILS_HH
 
 #include <algorithm>
 #include <random>
@@ -21,26 +21,26 @@
         }                                                           \
     } while (0)
 
-void fill_zeros(float* ptr, int size) {
+inline void fill_zeros(float* ptr, int size) {
     std::fill(ptr, ptr + size, float(0.0));
 }
 
-void fill_ones(float* ptr, int size) {
+inline void fill_ones(float* ptr, int size) {
     std::fill(ptr, ptr + size, float(1.0));
 }
 
-void fill_increment(float* ptr, int size, int start = 1) {
+inline void fill_increment(float* ptr, int size, int start = 1) {
     std::iota(ptr, ptr + size, start);
 }
 
-void fill_random(float* arr, int size, float start, float end) {
+inline void fill_random(float* arr, int size, float start, float end) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_real_distribution<> dis(start, end);
     std::generate(arr, arr + size, [&]() { return dis(gen); });
 }
 
-void print(float* ptr, int r, int c) {
+inline void print(float* ptr, int r, int c) {
     for (int i = 0; i < r; ++i) {
         for (int j = 0; j < c; ++j) {
             std::cout << ptr[IDX2C(i, j, c)] << " ";
@@ -50,7 +50,7 @@ void print(float* ptr, int r, int c) {
     std::cout << "\n";
 }
 
-void reference_gemm(int M, int N, int K, float* A, float* B, float* C) {
+inline void reference_gemm(int M, int N, int K, float* A, float* B, float* C) {
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
             float tmp = 0.0;
@@ -62,7 +62,7 @@ void reference_gemm(int M, int N, int K, float* A, float* B, float* C) {
     }
 }
 
-bool compare_matrices(float* A, float* B, int rows, int cols, float tol=0.00001) {
+inline bool compare_matrices(float* A, float* B, int rows, int cols, float tol=0.00001) {
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < cols; j++) {
             float diff = std::fabs(A[i * cols + j] - B[i * cols + j]);
@@ -77,7 +77,7 @@ bool compare_matrices(float* A, float* B, int rows, int cols, float tol=0.00001)
     return true;
 }
 
-void cudaDeviceInfo() {
+inline void cudaDeviceInfo() {
     int deviceCount;
     cudaError_t error_id = cudaGetDeviceCount(&deviceCount);
 

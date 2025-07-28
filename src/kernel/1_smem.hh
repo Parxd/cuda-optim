@@ -1,7 +1,7 @@
-#include "../../utils.hh"
+#include "../utils.hh"
 
 template <int tile_size>
-__global__ void shared_mem(int M, int N, int K, float* A, float* B, float* C) {
+__global__ void smem(int M, int N, int K, float* A, float* B, float* C) {
     const int global_idx = threadIdx.x + blockIdx.x * blockDim.x;
     const int global_idy = threadIdx.y + blockIdx.y * blockDim.y;
     __shared__ float A_tile[tile_size * tile_size];
@@ -22,9 +22,9 @@ __global__ void shared_mem(int M, int N, int K, float* A, float* B, float* C) {
     }
 }
 
-void launch_shared_mem(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
+void inline launch_smem(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
     constexpr int tile_size = 32;
     dim3 gridDim(CEIL_DIV(M, tile_size), CEIL_DIV(N, tile_size));
     dim3 blockDim(tile_size, tile_size);
-    shared_mem<tile_size><<<gridDim, blockDim, 0, stream>>>(M, N, K, A, B, C);
+    smem<tile_size><<<gridDim, blockDim, 0, stream>>>(M, N, K, A, B, C);
 }
