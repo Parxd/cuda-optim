@@ -30,6 +30,7 @@ __device__ inline void ld_global2shared(
     const int B_row = thr_id / (BN / 4);
     const int B_col = thr_id % (BN / 4);
     
+    #pragma unroll
     for (int ld = 0; ld < A_lds; ++ld) {
         auto [x, y, z, w] = reinterpret_cast<float4*>(
             &gA[(cta_row * BM + (ld * A_ld_rows + A_row)) * K + (tile * BK + (A_col * 4))]
@@ -39,6 +40,7 @@ __device__ inline void ld_global2shared(
         sA[(A_col * 4 + 2) * BM + (A_ld_rows * ld + A_row)] = z;
         sA[(A_col * 4 + 3) * BM + (A_ld_rows * ld + A_row)] = w;
     }
+    #pragma unroll
     for (int ld = 0; ld < B_lds; ++ld) {
         reinterpret_cast<float4*>(&sB[(ld * B_ld_rows + B_row) * BN + (B_col * 4)])[0] = 
             reinterpret_cast<float4*>(
@@ -69,23 +71,31 @@ __device__ inline void ld_shared2reg_mma(
     const int thr_col = thr_id % 4;
 
     // ld sA -> rA
+    #pragma unroll
     for (int warp_iter_m = 0; warp_iter_m < WIM; ++warp_iter_m) {
+        #pragma unroll
         for (int thread_m = 0; thread_m < TM; ++thread_m) {
             rA[warp_iter_m * TM + thread_m] = 
                 sA[warp_k * BM + (warp_row * WM + (warp_iter_m * (TM * 8) + (thr_row * TM + thread_m)))];
         }
     }
     // ld sB -> rB
+    #pragma unroll
     for (int warp_iter_n = 0; warp_iter_n < WIN; ++warp_iter_n) {
+        #pragma unroll
         for (int thread_n = 0; thread_n < TN; ++thread_n) {
             rB[warp_iter_n * TN + thread_n] = 
                 sB[warp_k * BN + (warp_col * WN + (warp_iter_n * (TN * 4) + (thr_col * TN + thread_n)))];
         }
     }
     // mma
+    #pragma unroll
     for (int warp_iter_m = 0; warp_iter_m < WIM; ++warp_iter_m) {
+        #pragma unroll
         for (int warp_iter_n = 0; warp_iter_n < WIN; ++warp_iter_n) {
+            #pragma unroll
             for (int thread_m = 0; thread_m < TM; ++thread_m) {
+                #pragma unroll
                 for (int thread_n = 0; thread_n < TN; ++thread_n) {
                     // rC of shape (TM * WIM, TN * WIN)
                     rC[(warp_iter_m * TM + thread_m) * (TN * WIN) + (warp_iter_n * TN + thread_n)] += 
@@ -102,7 +112,6 @@ template <int BM, int BN, int BK,
 __device__ inline void st_reg2global(
     const cg::thread_block& cta,
     const cg::thread_block_tile<32, cg::thread_block>& warp,
-    const int tile,
     const int M, const int N, const int K,
     float* gC, float* rC
 ) {
@@ -118,10 +127,14 @@ __device__ inline void st_reg2global(
     const int warp_thr_row = warp_thr_id / 4;
     const int warp_thr_col = warp_thr_id % 4;
     
+    #pragma unroll
     for (int warp_iter_m = 0; warp_iter_m < WIM; ++warp_iter_m) {
+        #pragma unroll
         for (int warp_iter_n = 0; warp_iter_n < WIN; ++warp_iter_n) {
             // mapping layouts (TM, TN) -> (TM, TN / 4)
+            #pragma unroll
             for (int thread_m = 0; thread_m < TM; ++thread_m) {
+                #pragma unroll
                 for (int thread_n = 0; thread_n < TN / 4; ++thread_n) {
                     const int ld_idx = (warp_iter_m * TM + thread_m) * (TN * WIN) + (warp_iter_n * TN + (thread_n * 4));
                     const int st_idx = (cta_row * BM + (warp_row * WM + (warp_iter_m * (TM * 8) + (warp_thr_row * TM + thread_m)))) * N +
@@ -157,24 +170,24 @@ __global__ inline void warptile(int M, int N, int K, float* A, float* B, float* 
             );
         }
         cta.sync();
-        st_reg2global<BM, BN, BK, WM, WN, WIM, WIN, TM, TN>(
-            cta, warp, tile, M, N, K, C, res
-        );
     }
+    st_reg2global<BM, BN, BK, WM, WN, WIM, WIN, TM, TN>(
+        cta, warp, M, N, K, C, res
+    );
 }
 
 __host__ inline void launch_warptile(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
     // CTA size
     constexpr int BM = 128;
     constexpr int BN = 128;
-    constexpr int BK = 16;
+    constexpr int BK = 8;
     // warp-tile size
     constexpr int WM = 64;
     constexpr int WN = 64;
     constexpr int WK = 1;
     // thread-tile size
-    constexpr int TM = 4;
-    constexpr int TN = 4;
+    constexpr int TM = 8;
+    constexpr int TN = 8;
     constexpr int TK = 1;
     // iters. over warp-tile
     // assume arbitrary (4, 8) thread layout in warp
