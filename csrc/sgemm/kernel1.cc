@@ -1,7 +1,4 @@
-#ifndef NAIVE_HH
-#define NAIVE_HH
-
-#include "../utils.hh"
+#include "../utils.h"
 
 __global__ inline void naive(int M, int N, int K, float* A, float* B, float* C) {
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
@@ -22,5 +19,3 @@ void inline launch_naive(int M, int N, int K, float* A, float* B, float* C, cuda
     dim3 blockDim(block_dim_x, block_dim_y);
     naive<<<gridDim, blockDim, 0, stream>>>(M, N, K, A, B, C);
 }
-
-#endif
