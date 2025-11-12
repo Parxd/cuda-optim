@@ -46,5 +46,6 @@ __global__ void __launch_bounds__(threads) warptile_v2(int M, int N, int K, floa
 }
 
 __host__ inline void launch_warptile_v2(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
-
+    int test = 50;
+    int test2 = 50
 }

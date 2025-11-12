@@ -2,7 +2,9 @@
 #include <cuda_runtime.h>
 #include "../utils.h"
 
-void run_kernel(int);
+void run_kernel(int kernel) {
+    
+}
 
 int main(int argc, char** argv) {
     if (argc < 2) {
@@ -11,7 +13,9 @@ int main(int argc, char** argv) {
     }
     int kernel = std::atoi(argv[1]);
 
-    int m, n, k;
+    int m = 2048;
+    int n = 2048;
+    int k = 2048;
     std::vector<float> h_A(m * k);
     std::vector<float> h_B(k * n);
     std::vector<float> h_C(m * n);
@@ -28,8 +32,6 @@ int main(int argc, char** argv) {
     run_kernel(kernel);
 
     CUDA_CHECK(cudaMemcpy(h_C.data(), d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost));
-
-
 
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
