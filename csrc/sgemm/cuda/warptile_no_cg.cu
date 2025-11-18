@@ -11,7 +11,6 @@ template <int BM, int BN, int BK,
 __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
     int M, int N, int K, float* A, float* B, float* C
 ) {
-
     __shared__ float shared_A[BM * BK];
     __shared__ float shared_B[BK * BN];
     float reg_A[TM * TK * WIM]  = {0.0};
@@ -19,28 +18,60 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
     float reg_C[TM * TN * WIM * WIN] = {0.0};
 
     constexpr int gA_lds = (BM * BK) / thrs / WIDTH;
+    constexpr int gA_ld_rows = (thrs * WIDTH) / BK;
     constexpr int gB_lds = (BK * BN) / thrs / WIDTH;
-    // (128, 32) --> (128, 8)
+    constexpr int gB_ld_rows = thrs / (BN / WIDTH);
+
     int thread_row_A = threadIdx.x / (BK / WIDTH);
     int thread_col_A = threadIdx.x % (BK / WIDTH);
-    // (32, 128) --> (32, 32)
+    // for 2nd loading schema
+    int thr_row_A = (threadIdx.x / BK) * WIDTH;
+    int thr_col_A = threadIdx.x % BK;
+
     int thread_row_B = threadIdx.x / (BN / WIDTH);
     int thread_col_B = threadIdx.x % (BN / WIDTH);
 
+    float* global_A = &A[blockIdx.y * BM * K];
+    float* global_B = &B[blockIdx.x * BN];
+
     int tiles = K / BK;
     for (int tile = 0; tile < tiles; ++tile) {
-        float* global_A = &A[blockIdx.y * BM * K];
-        // for (int gA_ld = 0; gA_ld < gA_lds; ++gA_ld) {
-        //     float* tA = ;
-        // }
-    }
+        /*
+        1st loading schema: ld.global.v4.f32 -> st.shared.f32
+        benchmarking shows higher relative bandwidth on lower BK = 16 sizes (highest absolute bandwidth)
+        */
+#pragma unroll
+        for (int ld = 0; ld < gA_lds; ++ld) {
+            float* global_thread = &global_A[(ld * gA_ld_rows + thread_row_A) * K + (tile * BK + (thread_col_A * 4))];
+            auto load = reinterpret_cast<float4*>(global_thread)[0];
+            shared_A[(thread_col_A * WIDTH) * BM + (ld * gA_ld_rows + thread_row_A)] = load.x;
+            shared_A[(thread_col_A * WIDTH + 1) * BM + (ld * gA_ld_rows + thread_row_A)] = load.y;
+            shared_A[(thread_col_A * WIDTH + 2) * BM + (ld * gA_ld_rows + thread_row_A)] = load.z;
+            shared_A[(thread_col_A * WIDTH + 3) * BM + (ld * gA_ld_rows + thread_row_A)] = load.w;
+        }
 
-    #if 0
-    if (thread(0)) {
-        printf("%d\n", thread_row_A);
-        printf("%d\n", thread_col_A);
+        /*
+        2nd loading schema: ld.global.f32 -> st.shared.v4.f32
+        benchmarking shows higher relative bandwidth on higher BK = 32 sizes
+        */
+// #pragma unroll
+//         for (int ld = 0; ld < gA_lds; ++ld) {
+//             float4 load;
+//             load.x = global_A[(ld * gA_ld_rows + thr_row_A) * K + (tile * BK + thr_col_A)];
+//             load.y = global_A[(ld * gA_ld_rows + thr_row_A + 1) * K + (tile * BK + thr_col_A)];
+//             load.z = global_A[(ld * gA_ld_rows + thr_row_A + 2) * K + (tile * BK + thr_col_A)];
+//             load.w = global_A[(ld * gA_ld_rows + thr_row_A + 3) * K + (tile * BK + thr_col_A)];
+//             reinterpret_cast<float4*>(&shared_A[thr_col_A * BM + (ld * gA_ld_rows + thr_row_A)])[0] = load;
+//         }
+
+#pragma unroll
+        for (int ld = 0; ld < gB_lds; ++ld) {
+            float* global_thread = &global_B[(tile * BK + (ld * gB_ld_rows + thread_row_B)) * N + (thread_col_B * WIDTH)];
+            auto load = reinterpret_cast<float4*>(global_thread)[0];
+            reinterpret_cast<float4*>(&shared_B[(ld * gB_ld_rows + thread_row_B) * BN + (thread_col_B * WIDTH)])[0] = load;
+        }
+        __syncthreads();
     }
-    #endif
 }
 
 __host__ inline void launch_warptile_no_cg(
