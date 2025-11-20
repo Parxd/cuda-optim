@@ -21,18 +21,32 @@
         }                                                           \
     } while (0)
 
+__device__
+inline bool thread(int tid) {
+    return !blockIdx.x && !blockIdx.y && threadIdx.x == tid;
+}
+
+__device__
+inline bool thread(int tid, int bid) {
+    return blockIdx.y * gridDim.x + blockIdx.x == bid && threadIdx.x == tid;
+}
+
+__host__
 inline void fill_zeros(float* ptr, int size) {
     std::fill(ptr, ptr + size, float(0.0));
 }
 
+__host__
 inline void fill_ones(float* ptr, int size) {
     std::fill(ptr, ptr + size, float(1.0));
 }
 
+__host__
 inline void fill_increment(float* ptr, int size, int start = 1) {
     std::iota(ptr, ptr + size, start);
 }
 
+__host__
 inline void fill_random(float* arr, int size, float start, float end) {
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -40,6 +54,7 @@ inline void fill_random(float* arr, int size, float start, float end) {
     std::generate(arr, arr + size, [&]() { return dis(gen); });
 }
 
+__host__
 inline void print(float* ptr, int r, int c) {
     for (int i = 0; i < r; ++i) {
         for (int j = 0; j < c; ++j) {
@@ -50,6 +65,7 @@ inline void print(float* ptr, int r, int c) {
     std::cout << "\n";
 }
 
+__host__
 inline void reference_gemm(int M, int N, int K, float* A, float* B, float* C) {
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
@@ -62,6 +78,7 @@ inline void reference_gemm(int M, int N, int K, float* A, float* B, float* C) {
     }
 }
 
+__host__
 inline bool compare_matrices(float* A, float* B, int rows, int cols, float tol=0.00001) {
     for (int i = 0; i < rows; i++) {
         for (int j = 0; j < cols; j++) {
@@ -77,6 +94,7 @@ inline bool compare_matrices(float* A, float* B, int rows, int cols, float tol=0
     return true;
 }
 
+__host__
 inline void cudaDeviceInfo() {
     int deviceCount;
     cudaError_t error_id = cudaGetDeviceCount(&deviceCount);
