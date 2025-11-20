@@ -25,15 +25,14 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
     int thread_row_A = threadIdx.x / (BK / WIDTH);
     int thread_col_A = threadIdx.x % (BK / WIDTH);
     // for 2nd loading schema
-    int thr_row_A = (threadIdx.x / BK) * WIDTH;
-    int thr_col_A = threadIdx.x % BK;
+    // int thr_row_A = (threadIdx.x / BK) * WIDTH;
+    // int thr_col_A = threadIdx.x % BK;
 
     int thread_row_B = threadIdx.x / (BN / WIDTH);
     int thread_col_B = threadIdx.x % (BN / WIDTH);
 
     float* global_A = &A[blockIdx.y * BM * K];
     float* global_B = &B[blockIdx.x * BN];
-
     int tiles = K / BK;
     for (int tile = 0; tile < tiles; ++tile) {
         /*
@@ -49,7 +48,6 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
             shared_A[(thread_col_A * WIDTH + 2) * BM + (ld * gA_ld_rows + thread_row_A)] = load.z;
             shared_A[(thread_col_A * WIDTH + 3) * BM + (ld * gA_ld_rows + thread_row_A)] = load.w;
         }
-
         /*
         2nd loading schema: ld.global.f32 -> st.shared.v4.f32
         benchmarking shows higher relative bandwidth on higher BK = 32 sizes
@@ -71,6 +69,60 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
             reinterpret_cast<float4*>(&shared_B[(ld * gB_ld_rows + thread_row_B) * BN + (thread_col_B * WIDTH)])[0] = load;
         }
         __syncthreads();
+
+        int warp_id = threadIdx.x / 32;
+        int warp_row = warp_id / (BM / WM);
+        int warp_col = warp_id % (BM / WM);
+        int thr_row = threadIdx.x / (WN / WIN / TN);
+        int thr_col = threadIdx.x % (WN / WIN / TN);
+        constexpr int warptiles = BK / WK;
+        constexpr int stride_m = WM / WIM;
+        constexpr int stride_n = WN / WIN;
+#pragma unroll
+        for (int tile = 0; tile < warptiles; ++tile) {
+        // load registers
+#pragma unroll
+            for (int warp_m = 0; warp_m < WIM; ++warp_m) {
+                float4 ld;
+                auto addr = &shared_A[tile * BM + (warp_row * WM + (warp_m * stride_m + (thr_row * TM + 0)))];
+                // if (thread(0)) {printf("Tile %d, Load %d: %d\n", tile, warp_m, tile * BM + (warp_row * WM + (warp_m * stride_m + (thr_row * TM + 0))));}
+                asm volatile (
+                    "ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
+                    : "=f"(ld.x), "=f"(ld.y), "=f"(ld.z), "=f"(ld.w)
+                    : "l"(addr)
+                );
+                reinterpret_cast<float4*>(&reg_A[warp_m * TM])[0] = ld;
+            }
+#pragma unroll
+            for (int warp_n = 0; warp_n < WIN; ++warp_n) {
+                float4 ld;
+                auto addr = &shared_B[tile * BN + (warp_col * WN + (warp_n * stride_n + (thr_col * TN)))];
+                asm volatile (
+                    "ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
+                    : "=f"(ld.x), "=f"(ld.y), "=f"(ld.z), "=f"(ld.w)
+                    : "l"(addr)
+                );
+                reinterpret_cast<float4*>(&reg_B[warp_n * TN])[0] = ld;
+            }
+            // MMA
+#pragma unroll
+            for (int warp_m = 0; warp_m < WIM; ++warp_m) {
+#pragma unroll
+                for (int warp_n = 0; warp_n < WIN; ++warp_n) {
+#pragma unroll
+                    for (int thread_m = 0; thread_m < TM; ++thread_m) {
+#pragma unroll
+                        for (int thread_n = 0; thread_n < TM; ++thread_n) {
+                            reg_C[(warp_m * TM + thread_m) * (TN * WIN) + (warp_n * TN + thread_n)] += reg_A[warp_m * TM + thread_m] * reg_B[warp_n * TN + thread_n];
+                        }
+                    }
+                }
+            }
+        }
+        __syncthreads();
+
+        // write-back
+
     }
 }
 
@@ -86,7 +138,7 @@ __host__ inline void launch_warptile_no_cg(
     // assuming NN row-major GEMM problem
     constexpr int BM = 128;
     constexpr int BN = 128;
-    constexpr int BK = 32;
+    constexpr int BK = 16;
     constexpr int WM = 64;
     constexpr int WN = 64;
     constexpr int WK = 1;
@@ -173,4 +225,40 @@ __host__ inline void launch_warptile_no_cg(
         registerfile is now the bottleneck --> if registerfile bottleneck results in less CTAs per SM, what's the benefit?
         each thread covers WK in one iteration, higher compute intensity / thread + higher ILP on CUDA cores
     */
+}
+
+void occupancy_test() {
+    constexpr int regfile_size_sm = 65536;  // unit: 32-bit registers
+    constexpr int smem_bytes_sm = 102400;
+    constexpr int threads_sm = 1536;
+    constexpr int warps_sm = threads_sm / 32;
+
+    constexpr int BM = 128;
+    constexpr int BN = 128;
+    constexpr int BK = 16;
+
+    // block-level
+    constexpr int threads = 256;
+    constexpr int warps = threads / 32;
+    constexpr int WIM = 2;  // rows when warps tiled for MMA
+    constexpr int WIN = warps / WIM;  // cols. when warps tiled for MMA
+
+    constexpr int WM = BM / WIM;
+    constexpr int WN = BN / WIN;
+    constexpr int mma_units = (WM * WN) / 32;
+    constexpr int TM = 4;
+    constexpr int TN = 4;
+    constexpr int threadtiles = mma_units / (TM * TN);
+    constexpr int TIM = 2;
+    constexpr int TIN = threadtiles / TIM;
+
+    constexpr int smem_bytes = sizeof(float) * ((BM * BK) + (BK * BN));
+    constexpr int thread_registers = (TM * TIM) + (TN * TIN) + (TM * TN * WIM * WIN);
+    constexpr int cta_registers = threads * thread_registers;
+
+    constexpr int min_blocks = std::min({
+        smem_bytes_sm / smem_bytes,
+        regfile_size_sm / cta_registers,
+        warps_sm / warps
+    });
 }
