@@ -13,8 +13,8 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
 ) {
     __shared__ float shared_A[BM * BK];
     __shared__ float shared_B[BK * BN];
-    float reg_A[TM * TK * WIM]  = {0.0};
-    float reg_B[TK * TN * WIN] = {0.0};
+    float reg_A[TM * TK * WIM];
+    float reg_B[TK * TN * WIN];
     float reg_C[TM * TN * WIM * WIN] = {0.0};
 
     constexpr int gA_lds = (BM * BK) / thrs / WIDTH;
@@ -79,30 +79,36 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
         constexpr int stride_m = WM / WIM;
         constexpr int stride_n = WN / WIN;
 #pragma unroll
-        for (int tile = 0; tile < warptiles; ++tile) {
-        // load registers
+        for (int warptile = 0; warptile < warptiles; ++warptile) {
 #pragma unroll
             for (int warp_m = 0; warp_m < WIM; ++warp_m) {
                 float4 ld;
-                auto addr = &shared_A[tile * BM + (warp_row * WM + (warp_m * stride_m + (thr_row * TM + 0)))];
-                // if (thread(0)) {printf("Tile %d, Load %d: %d\n", tile, warp_m, tile * BM + (warp_row * WM + (warp_m * stride_m + (thr_row * TM + 0))));}
+                float* gen_addr = &shared_A[warptile * BM + (warp_row * WM + (warp_m * stride_m + (thr_row * TM + 0)))];
+                auto shared_addr = __cvta_generic_to_shared(gen_addr);
+                // asm volatile(
+                //     "cvta.to.shared.u32 %0, %1;" 
+                //     : "=l"(shared_addr) 
+                //     : "l"(gen_addr)
+                // );
                 asm volatile (
                     "ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
                     : "=f"(ld.x), "=f"(ld.y), "=f"(ld.z), "=f"(ld.w)
-                    : "l"(addr)
+                    : "l"(shared_addr)
                 );
                 reinterpret_cast<float4*>(&reg_A[warp_m * TM])[0] = ld;
             }
 #pragma unroll
             for (int warp_n = 0; warp_n < WIN; ++warp_n) {
                 float4 ld;
-                auto addr = &shared_B[tile * BN + (warp_col * WN + (warp_n * stride_n + (thr_col * TN)))];
+                float* gen_addr = &shared_B[warptile * BN + (warp_col * WN + (warp_n * stride_n + (thr_col * TN)))];
+                auto shared_addr = __cvta_generic_to_shared(gen_addr);
                 asm volatile (
                     "ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
                     : "=f"(ld.x), "=f"(ld.y), "=f"(ld.z), "=f"(ld.w)
-                    : "l"(addr)
+                    : "l"(shared_addr)
                 );
                 reinterpret_cast<float4*>(&reg_B[warp_n * TN])[0] = ld;
+                // if (!tile && thread(0)) printf("%f\n", reg_B[0]);
             }
             // MMA
 #pragma unroll
@@ -118,11 +124,11 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
                     }
                 }
             }
-        }
         __syncthreads();
 
-        // write-back
+//         // write-back
 
+        }
     }
 }
 
