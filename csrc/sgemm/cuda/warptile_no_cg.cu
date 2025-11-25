@@ -9,7 +9,7 @@ template <int BM, int BN, int BK,
           int WIM, int WIN,
           int thrs, int blks>
 __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
-    int M, int N, int K, float* A, float* B, float* C
+    int M, int N, int K, float alpha, float* A, float* B, float beta, float* C
 ) {
     __shared__ float shared_A[BM * BK];
     __shared__ float shared_B[BK * BN];
@@ -30,6 +30,15 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
 
     int thread_row_B = threadIdx.x / (BN / WIDTH);
     int thread_col_B = threadIdx.x % (BN / WIDTH);
+
+    int warp_id = threadIdx.x / 32;
+    int warp_row = warp_id / (BN / WN);
+    int warp_col = warp_id % (BN / WN);
+    int thr_row = (threadIdx.x % 32) / (WN / WIN / TN);
+    int thr_col = (threadIdx.x % 32) % (WN / WIN / TN);
+    constexpr int warptiles = BK / WK;
+    constexpr int stride_m = WM / WIM;
+    constexpr int stride_n = WN / WIN;
 
     float* global_A = &A[blockIdx.y * BM * K];
     float* global_B = &B[blockIdx.x * BN];
@@ -70,44 +79,33 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
         }
         __syncthreads();
 
-        int warp_id = threadIdx.x / 32;
-        int warp_row = warp_id / (BM / WM);
-        int warp_col = warp_id % (BM / WM);
-        int thr_row = threadIdx.x / (WN / WIN / TN);
-        int thr_col = threadIdx.x % (WN / WIN / TN);
-        constexpr int warptiles = BK / WK;
-        constexpr int stride_m = WM / WIM;
-        constexpr int stride_n = WN / WIN;
+
 #pragma unroll
         for (int warptile = 0; warptile < warptiles; ++warptile) {
 #pragma unroll
             for (int warp_m = 0; warp_m < WIM; ++warp_m) {
-                float4 ld;
                 float* gen_addr = &shared_A[warptile * BM + (warp_row * WM + (warp_m * stride_m + (thr_row * TM + 0)))];
                 auto shared_addr = __cvta_generic_to_shared(gen_addr);
                 // asm volatile(
-                //     "cvta.to.shared.u32 %0, %1;" 
+                //     "cvta.to.shared.u64 %0, %1;" 
                 //     : "=l"(shared_addr) 
                 //     : "l"(gen_addr)
                 // );
                 asm volatile (
                     "ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
-                    : "=f"(ld.x), "=f"(ld.y), "=f"(ld.z), "=f"(ld.w)
+                    : "=f"(reg_A[warp_m * TM]), "=f"(reg_A[warp_m * TM + 1]), "=f"(reg_A[warp_m * TM + 2]), "=f"(reg_A[warp_m * TM + 3])
                     : "l"(shared_addr)
                 );
-                reinterpret_cast<float4*>(&reg_A[warp_m * TM])[0] = ld;
             }
 #pragma unroll
             for (int warp_n = 0; warp_n < WIN; ++warp_n) {
-                float4 ld;
                 float* gen_addr = &shared_B[warptile * BN + (warp_col * WN + (warp_n * stride_n + (thr_col * TN)))];
                 auto shared_addr = __cvta_generic_to_shared(gen_addr);
                 asm volatile (
                     "ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
-                    : "=f"(ld.x), "=f"(ld.y), "=f"(ld.z), "=f"(ld.w)
+                    : "=f"(reg_B[warp_n * TN]), "=f"(reg_B[warp_n * TN + 1]), "=f"(reg_B[warp_n * TN + 2]), "=f"(reg_B[warp_n * TN + 3])
                     : "l"(shared_addr)
                 );
-                reinterpret_cast<float4*>(&reg_B[warp_n * TN])[0] = ld;
                 // if (!tile && thread(0)) printf("%f\n", reg_B[0]);
             }
             // MMA
@@ -118,16 +116,27 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
 #pragma unroll
                     for (int thread_m = 0; thread_m < TM; ++thread_m) {
 #pragma unroll
-                        for (int thread_n = 0; thread_n < TM; ++thread_n) {
+                        for (int thread_n = 0; thread_n < TN; ++thread_n) {
                             reg_C[(warp_m * TM + thread_m) * (TN * WIN) + (warp_n * TN + thread_n)] += reg_A[warp_m * TM + thread_m] * reg_B[warp_n * TN + thread_n];
                         }
                     }
                 }
             }
+        }
         __syncthreads();
+    }
 
-//         // write-back
-
+    int thr_st_row = (threadIdx.x % 32) / 4;
+    int thr_st_col = (threadIdx.x % 32) % 4;
+#pragma unroll
+    for (int warp_m = 0; warp_m < WIM; ++warp_m) {
+#pragma unroll
+        for (int warp_n = 0; warp_n < WIN; ++warp_n) {
+#pragma unroll
+            for (int thread_m = 0; thread_m < TM; ++thread_m) {
+                auto st_idx = (blockIdx.y * BM + (warp_row * WM + (warp_m * (WM / WIM) + (thr_st_row * 4 + thread_m)))) * N + (blockIdx.x * BN + (warp_col * WN + (warp_n * (WN / WIN) + (thr_st_col * 4))));
+                reinterpret_cast<float4*>(&C[st_idx])[0] = reinterpret_cast<float4*>(&reg_C[(warp_m * TM + thread_m) * (TN * WIN) + (warp_n * TN)])[0];;
+            }
         }
     }
 }
@@ -187,7 +196,7 @@ __host__ inline void launch_warptile_no_cg(
                    WIM, WIN,
                    threads, min_blocks>
                    <<<grid_dim, block_dim, 0, stream>>>
-                   (M, N, K, A, B, C);
+                   (M, N, K, 1.0, A, B, 0.0, C);
     
     /*
         (BM, BN, BK) = (128, 128, 8)
