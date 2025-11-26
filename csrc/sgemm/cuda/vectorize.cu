@@ -1,5 +1,5 @@
 #include <assert.h>
-#include "../utils.h"
+#include "../../utils.h"
 
 // warning: contains a lot of hard-coding, e.g. only using 128-byte transactions
 template <int block_M, int block_N, int block_K, int thread_M, int thread_N>

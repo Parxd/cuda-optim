@@ -1,4 +1,4 @@
-#include "../utils.h"
+#include "../../utils.h"
 
 template <int block_M, int block_N, int block_K, int thread_M>
 __global__ void onedim_threadtile(int M, int N, int K, float* A, float* B, float* C) {
