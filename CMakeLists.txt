@@ -25,3 +25,4 @@ endfunction()
 
 add_op(elementwise csrc/elementwise)
 add_op(sgemm csrc/sgemm)
+target_link_libraries(sgemm PRIVATE cublas)
