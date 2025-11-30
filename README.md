@@ -6,14 +6,14 @@ Currently written in:
 - CUTLASS / CuTe
 
 Ops. attempted:
-- (unary / binary) elementwise op.
-- float32 GEMM
+- [(unary / binary) elementwise op.](./csrc/elementwise/README.md)
+- [fp32 GEMM](./csrc/sgemm/README.md)
 
 To build and run an operation:
 ```bash
 $ mkdir build && cd build
 $ cmake ..
-$ make <OP_NAME> && ./<OP_NAME>
+$ make <OP_NAME> && ./<OP_NAME> <args...>
 ```
 
 To register an operation (for ref.):
