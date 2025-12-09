@@ -1,40 +1,151 @@
 #include <iostream>
 #include <cuda_runtime.h>
-#include "../utils.h"
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
 
-void run_kernel(int kernel) {
-    
+#include "./cuda/naive.cu"
+#include "./cuda/smem.cu"
+#include "./cuda/onedim_tile.cu"
+#include "./cuda/twodim_tile.cu"
+#include "./cuda/vectorize.cu"
+#include "./cuda/128x128x8_cg.cu"
+#include "./cuda/128x128x16.cu"
+#include "./cuda/siboehm.cu"
+
+#include "./cutlass/pipeline_nodb_g2r.cu"
+
+void launch_cublas(cublasHandle_t handle, int M, int N, int K, float alpha, float *A, float*B, float beta, float *C) {
+    cublasGemmEx(
+        handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_32F,
+        N, A, CUDA_R_32F, K, &beta, C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F,
+        CUBLAS_GEMM_DEFAULT_TENSOR_OP
+    );
 }
 
+void run_kernel(int kernel, int M, int N, int K, float* A, float* B, float* C, cublasHandle_t handle) {
+    // CUDA
+    if (kernel == 0) launch_naive(M, N, K, A, B, C, nullptr);
+    else if (kernel == 1) launch_smem(M, N, K, A, B, C, nullptr);
+    else if (kernel == 2) launch_onedim_threadtile(M, N, K, A, B, C, nullptr);
+    else if (kernel == 3) launch_twodim_threadtile(M, N, K, A, B, C, nullptr);
+    else if (kernel == 4) launch_vectorize(M, N, K, A, B, C, nullptr);
+    else if (kernel == 5) launch_warptile_cg(M, N, K, A, B, C, nullptr);
+    else if (kernel == 6) launch_warptile_no_cg(M, N, K, A, B, C, nullptr);
+    else if (kernel == 7) launch_siboehm(M, N, K, 1.0, A, B, 0.0, C);
+    // CUTLASS
+    else if (kernel == 8) launch_pipeline_nodb_g2r('N', 'N', N, M, K, 1.0, B, N, A, K, 0.0, C, N);
+    // else if (kernel == 8) launch_pipeline_nodb_g2r('N', 'N', M, N, K, 1.0, A, M, B, K, 0.0, C, M);
+    // cuBLAS
+    else if (kernel == 15) launch_cublas(handle, M, N, K, 1.0, A, B, 0.0, C);
+}  // TODO: maybe separate each kernel to have their own driver boilerplate--CUTLASS kernels get pretty nuanced
+
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <number>\n";
-        return 1;
+    int kernel = 0;
+    int M = 128;
+    int N = 128;
+    int K = 128;
+    bool time = false;
+    int trials = 50;
+    bool check = false;
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+    if (argc > 1) kernel = std::atoi(argv[1]);
+    if (argc > 2) M = std::atoi(argv[2]);
+    if (argc > 3) N = std::atoi(argv[3]);
+    if (argc > 4) K = std::atoi(argv[4]);
+    if (argc > 5) time = bool(std::atoi(argv[5]));
+    if (argc > 6) check = bool(std::atoi(argv[6]));
+    if (argc == 2 && std::string(argv[1]) == "--help") {
+        std::cout << "Usage: " << argv[0] << "[kernel: int=0-10] [M: int=128] [N: int=128] [K:int=128] [time: bool=0] [verify: bool=0]\n";
+        return 0;
     }
-    int kernel = std::atoi(argv[1]);
 
-    int m = 2048;
-    int n = 2048;
-    int k = 2048;
-    std::vector<float> h_A(m * k);
-    std::vector<float> h_B(k * n);
-    std::vector<float> h_C(m * n);
-    fill_random(h_A.data(), h_A.size(), 0.0, 1.0);
-    fill_random(h_B.data(), h_B.size(), 0.0, 1.0);
+    std::cout << "[SGEMM]: Running kernel=" << kernel
+              << " with M=" << M
+              << ", N=" << N
+              << ", K=" << K
+              << " (time=" << time
+              << ", verify=" << check
+              << ")\n";
 
-    float *d_A, *d_B, *d_C;
-    CUDA_CHECK(cudaMalloc((void**)&d_A, m * k * sizeof(float)));
-    CUDA_CHECK(cudaMalloc((void**)&d_B, k * n * sizeof(float)));
-    CUDA_CHECK(cudaMalloc((void**)&d_C, m * n * sizeof(float)));
-    CUDA_CHECK(cudaMemcpy(d_A, h_A.data(), m * k * sizeof(float), cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_B, h_B.data(), k * n * sizeof(float), cudaMemcpyHostToDevice));
+    auto hA = thrust::host_vector<float>(M * K);
+    auto hB = thrust::host_vector<float>(K * N);
+    auto hC = thrust::host_vector<float>(M * N);
+    // std::iota(hA.begin(), hA.end(), 0.0f);
+    // std::iota(hB.begin(), hB.end(), 0.0f);
+    std::srand(static_cast<unsigned>(std::time(nullptr)));
+    for (int i = 0; i < M * K; ++i) {
+        hA[i] = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
+    }
+    for (int i = 0; i < N * K; ++i) {
+        hB[i] = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
+    }
 
-    run_kernel(kernel);
+    auto dA = thrust::device_vector<float>(M * K);
+    auto dB = thrust::device_vector<float>(K * N);
+    auto dC = thrust::device_vector<float>(M * N, 0);
+    dA = hA; dB = hB;
 
-    CUDA_CHECK(cudaMemcpy(h_C.data(), d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost));
+    if (time) {
+        cudaEvent_t start, stop;
+        CUDA_CHECK(cudaEventCreate(&start));
+        CUDA_CHECK(cudaEventCreate(&stop));
+        run_kernel(kernel, M, N, K, dA.data().get(), dB.data().get(), dC.data().get(), handle);
 
-    CUDA_CHECK(cudaFree(d_A));
-    CUDA_CHECK(cudaFree(d_B));
-    CUDA_CHECK(cudaFree(d_C));
+        CUDA_CHECK(cudaEventRecord(start));
+        for (int i = 0; i < trials; ++i) {
+            run_kernel(kernel, M, N, K, dA.data().get(), dB.data().get(), dC.data().get(), handle);
+        }
+        CUDA_CHECK(cudaEventRecord(stop));
+        CUDA_CHECK(cudaEventSynchronize(stop));
+        float milliseconds = 0;
+        CUDA_CHECK(cudaEventElapsedTime(&milliseconds, start, stop));
+        float avg_time = milliseconds / trials;
+
+        float gflops = (2.0f * M * N * K) / (avg_time * 1e6);  // GFLOPS
+        float bandwidth = (M * K + K * N + M * N) * sizeof(float) / (avg_time * 1e6);  // GB/s
+
+        std::cout << "[SGEMM]: Avg. walltime (" << trials << " trials): " << avg_time << " ms\n";       
+        std::cout << "[SGEMM]: Performance: " << gflops << " GFLOPS\n";
+        std::cout << "[SGEMM]: Bandwidth: " << bandwidth << "GB/s\n";
+
+        CUDA_CHECK(cudaEventDestroy(start));
+        CUDA_CHECK(cudaEventDestroy(stop));
+    }
+
+    // run_kernel(kernel, M, N, K, hA.data(), hB.data(), hC.data(), handle);
+    run_kernel(kernel, M, N, K, dA.data().get(), dB.data().get(), dC.data().get(), handle);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    hC = dC;
+
+    if (check) {
+        auto hC_ref = thrust::host_vector<float>(M * N);
+        for (int i = 0; i < M; ++i) {
+            for (int j = 0; j < N; ++j) {
+                float sum = 0.0f;
+                for (int k = 0; k < K; ++k) {
+                    sum += hA[i * K + k] * hB[k * N + j];
+                }
+                hC_ref[i * N + j] = sum;
+            }
+        }
+
+        bool failed = false;
+        float delta = 0.001;
+        std::cout << "[SGEMM]: Verifying results..." << "\n";
+        for (uint i = 0; i < hC.size(); ++i) {
+            auto diff = std::abs(hC[i] - hC_ref[i]);
+            if (diff > delta) {
+                std::cerr << "[SGEMM]: Mismatch at (" << i / N << ", " << i % N << "), diff=" << diff << "\n";
+                std::cerr << "[SGEMM]: Expected=" << hC_ref[i] << ", Actual=" << hC[i] << "\n"; failed = true;
+            }
+        }
+        if (failed) return 1;
+        else std::cout << "[SGEMM]: All elements match for delta=" << delta << "\n";
+    }
+
+    cublasDestroy(handle);
     return 0;
 }
