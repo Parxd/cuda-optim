@@ -1,3 +1,4 @@
+#include "cute/underscore.hpp"
 #include <cute/tensor.hpp>
 
 template <typename strideA, typename strideB, typename strideC,
@@ -74,27 +75,33 @@ void sgemm_nn(int m, int n, int k, float alpha,
     using namespace cute;
 
     auto problem_shape = make_shape(m, n, k);  // dynamic
-    auto cta_shape = make_shape(Int<128>{}, Int<128>{}, Int<8>{});
+    auto cta_shape = make_shape(Int<128>{}, Int<128>{}, Int<16>{});
     auto stride_A = make_stride(Int<1>{}, ldA);
     auto stride_B = make_stride(ldB, Int<1>{});
     auto stride_C = make_stride(Int<1>{}, ldC);
     
     auto sA_layout = make_layout(make_shape(select<0>(cta_shape), select<2>(cta_shape)), LayoutLeft{});
-    auto sB_layout = make_layout(make_shape(select<1>(cta_shape), select<2>(cta_shape)), LayoutRight{});
+    auto sB_layout = make_layout(make_shape(select<1>(cta_shape), select<2>(cta_shape)), LayoutLeft{});
 
     TiledCopy copy_A = make_tiled_copy(
         Copy_Atom<UniversalCopy<uint128_t>, float>{},
-        make_layout(make_shape(Int<32>{}, Int<4>{})),
+        make_layout(make_shape(Int<32>{}, Int<8>{})),
         make_layout(make_shape(Int<4>{}, Int<1>{}))
     );
     TiledCopy copy_B = make_tiled_copy(
         Copy_Atom<UniversalCopy<uint128_t>, float>{},
-        make_layout(make_shape(Int<64>{}, Int<2>{}), LayoutRight{}),
+        make_layout(make_shape(Int<64>{}, Int<4>{}), LayoutRight{}),
         make_layout(make_shape(Int<1>{}, Int<4>{}))
     );
     TiledMMA mma = make_tiled_mma(
         MMA_Atom<UniversalFMA<float>>{},
-        make_layout(make_shape(Int<16>{}, Int<8>{}))
+        make_layout(make_shape(Int<16>{}, Int<16>{})),
+        Tile<
+            Layout<Shape<_16,_8>, Stride<_8,_1>>,
+            // Tile<_128,
+            _128,
+            Underscore
+        >{}
     );
     
     dim3 cta_dim(size(mma));
