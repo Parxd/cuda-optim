@@ -1,14 +1,11 @@
-#include <stdio.h>
 #include "../../utils.h"
-
-#define WIDTH 4  // pack 4 fp32
 
 template <int BM, int BN, int BK,
           int WM, int WN, int WK,
           int TM, int TN, int TK,
           int WIM, int WIN,
           int thrs, int blks>
-__global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
+__global__ void __launch_bounds__(thrs, blks) sgemm_128x16(
     int M, int N, int K, float alpha, float* A, float* B, float beta, float* C
 ) {
     __shared__ float shared_A[BM * BK];
@@ -17,19 +14,19 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
     float reg_B[TK * TN * WIN];
     float reg_C[TM * TN * WIM * WIN] = {0.0};
 
-    constexpr int gA_lds = (BM * BK) / thrs / WIDTH;
-    constexpr int gA_ld_rows = (thrs * WIDTH) / BK;
-    constexpr int gB_lds = (BK * BN) / thrs / WIDTH;
-    constexpr int gB_ld_rows = thrs / (BN / WIDTH);
+    constexpr int gA_lds = (BM * BK) / thrs / 4;
+    constexpr int gA_ld_rows = (thrs * 4) / BK;
+    constexpr int gB_lds = (BK * BN) / thrs / 4;
+    constexpr int gB_ld_rows = thrs / (BN / 4);
 
-    int thread_row_A = threadIdx.x / (BK / WIDTH);
-    int thread_col_A = threadIdx.x % (BK / WIDTH);
+    int thread_row_A = threadIdx.x / (BK / 4);
+    int thread_col_A = threadIdx.x % (BK / 4);
     // for 2nd loading schema
-    // int thr_row_A = (threadIdx.x / BK) * WIDTH;
+    // int thr_row_A = (threadIdx.x / BK) * 4;
     // int thr_col_A = threadIdx.x % BK;
 
-    int thread_row_B = threadIdx.x / (BN / WIDTH);
-    int thread_col_B = threadIdx.x % (BN / WIDTH);
+    int thread_row_B = threadIdx.x / (BN / 4);
+    int thread_col_B = threadIdx.x % (BN / 4);
 
     int warp_id = threadIdx.x / 32;
     int warp_row = warp_id / (BN / WN);
@@ -46,20 +43,20 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
     for (int tile = 0; tile < tiles; ++tile) {
         /*
         1st loading schema: ld.global.v4.f32 -> st.shared.f32
-        benchmarking shows higher relative bandwidth on lower BK = 16 sizes (highest absolute bandwidth)
+        benchmarking shows higher relative band4 on lower BK = 16 sizes (highest absolute band4)
         */
 #pragma unroll
         for (int ld = 0; ld < gA_lds; ++ld) {
             float* global_thread = &global_A[(ld * gA_ld_rows + thread_row_A) * K + (tile * BK + (thread_col_A * 4))];
             auto load = reinterpret_cast<float4*>(global_thread)[0];
-            shared_A[(thread_col_A * WIDTH) * BM + (ld * gA_ld_rows + thread_row_A)] = load.x;
-            shared_A[(thread_col_A * WIDTH + 1) * BM + (ld * gA_ld_rows + thread_row_A)] = load.y;
-            shared_A[(thread_col_A * WIDTH + 2) * BM + (ld * gA_ld_rows + thread_row_A)] = load.z;
-            shared_A[(thread_col_A * WIDTH + 3) * BM + (ld * gA_ld_rows + thread_row_A)] = load.w;
+            shared_A[(thread_col_A * 4) * BM + (ld * gA_ld_rows + thread_row_A)] = load.x;
+            shared_A[(thread_col_A * 4 + 1) * BM + (ld * gA_ld_rows + thread_row_A)] = load.y;
+            shared_A[(thread_col_A * 4 + 2) * BM + (ld * gA_ld_rows + thread_row_A)] = load.z;
+            shared_A[(thread_col_A * 4 + 3) * BM + (ld * gA_ld_rows + thread_row_A)] = load.w;
         }
         /*
         2nd loading schema: ld.global.f32 -> st.shared.v4.f32
-        benchmarking shows higher relative bandwidth on higher BK = 32 sizes
+        benchmarking shows higher relative band4 on higher BK = 32 sizes
         */
 // #pragma unroll
 //         for (int ld = 0; ld < gA_lds; ++ld) {
@@ -73,9 +70,9 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
 
 #pragma unroll
         for (int ld = 0; ld < gB_lds; ++ld) {
-            float* global_thread = &global_B[(tile * BK + (ld * gB_ld_rows + thread_row_B)) * N + (thread_col_B * WIDTH)];
+            float* global_thread = &global_B[(tile * BK + (ld * gB_ld_rows + thread_row_B)) * N + (thread_col_B * 4)];
             auto load = reinterpret_cast<float4*>(global_thread)[0];
-            reinterpret_cast<float4*>(&shared_B[(ld * gB_ld_rows + thread_row_B) * BN + (thread_col_B * WIDTH)])[0] = load;
+            reinterpret_cast<float4*>(&shared_B[(ld * gB_ld_rows + thread_row_B) * BN + (thread_col_B * 4)])[0] = load;
         }
         __syncthreads();
 
@@ -147,7 +144,7 @@ __global__ void __launch_bounds__(thrs, blks) warptile_no_cg(
     }
 }
 
-__host__ inline void launch_warptile_no_cg(
+__host__ inline void launch_sgemm_128x16(
     int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream
 ) {
     // for CC 8.6 ONLY
@@ -196,7 +193,7 @@ __host__ inline void launch_warptile_no_cg(
 
     dim3 grid_dim(CEIL_DIV(N, BN), CEIL_DIV(M, BM));
     constexpr dim3 block_dim(threads);
-    warptile_no_cg<BM, BN, BK,
+    sgemm_128x16<BM, BN, BK,
                    WM, WN, WK,
                    TM, TN, TK,
                    WIM, WIN,

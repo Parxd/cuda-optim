@@ -133,7 +133,7 @@ __device__ inline void st_reg2global(
 }
 
 template <int BM, int BN, int BK, int WM, int WN, int WK, int WIM, int WIN, int TM, int TN, int TK>
-__global__ void warptile_cg(int M, int N, int K, float* A, float* B, float* C) {
+__global__ void sgemm_128x8_cg(int M, int N, int K, float* A, float* B, float* C) {
     __shared__ float A_tile[BM * BK];
     __shared__ float B_tile[BK * BN];
     float A_register[TM * TK * WIM] = {0.0};
@@ -159,7 +159,7 @@ __global__ void warptile_cg(int M, int N, int K, float* A, float* B, float* C) {
     );
 }
 
-__host__ inline void launch_warptile_cg(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
+__host__ inline void launch_sgemm_128x8_cg(int M, int N, int K, float* A, float* B, float* C, cudaStream_t stream) {
     // CTA size
     constexpr int BM = 128;
     constexpr int BN = 128;
@@ -184,6 +184,6 @@ __host__ inline void launch_warptile_cg(int M, int N, int K, float* A, float* B,
     constexpr int threads_per_cta = (BM * BN) / (WM * WN) * 32;
     dim3 block_dim(threads_per_cta);
     dim3 grid_dim((M / BM) * (N / BN));
-    warptile_cg<BM, BN, BK, WM, WN, WK, WIM, WIN, TM, TN, TK>
+    sgemm_128x8_cg<BM, BN, BK, WM, WN, WK, WIM, WIN, TM, TN, TK>
         <<<grid_dim, block_dim, 0, stream>>>(M, N, K, A, B, C);
 }
