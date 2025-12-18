@@ -1,3 +1,4 @@
+#include "cute/stride.hpp"
 #include "cute/underscore.hpp"
 #include <cute/tensor.hpp>
 
@@ -5,14 +6,14 @@ namespace sgemm_128x16_pipe {
 
 template <typename strideA, typename strideB, typename strideC,
           typename sALayout, typename sBLayout,
-          typename ctaShape, typename copyPolicy, typename copyPolicyB, typename mmaPolicy>
+          typename ctaShape, typename copyPolicyA, typename copyPolicyB, typename mmaPolicy>
 __global__ void sgemm_128x16_pipe(
     int m, int n, int k, float alpha, float beta,
     const float* __restrict__ A, strideA stride_A,
     const float* __restrict__ B, strideB stride_B,
     float* __restrict__ C, strideC stride_C,
     ctaShape cta_shape, sALayout sA_layout, sBLayout sB_layout,
-    copyPolicy copy_A, copyPolicyB copy_B, mmaPolicy tiled_mma
+    copyPolicyA copy_A, copyPolicyB copy_B, mmaPolicy tiled_mma
 ) {
     using namespace cute;
     // TODO: ADD ASSERTIONS
@@ -81,9 +82,9 @@ void nn(int m, int n, int k, float alpha,
     auto stride_A = make_stride(Int<1>{}, ldA);
     auto stride_B = make_stride(ldB, Int<1>{});
     auto stride_C = make_stride(Int<1>{}, ldC);
-    
-    auto sA_layout = make_layout(make_shape(select<0>(cta_shape), select<2>(cta_shape)), LayoutLeft{});
-    auto sB_layout = make_layout(make_shape(select<1>(cta_shape), select<2>(cta_shape)), LayoutLeft{});
+
+    auto sA_layout = make_layout(make_shape(select<0>(cta_shape), select<2>(cta_shape)));
+    auto sB_layout = make_layout(make_shape(select<1>(cta_shape), select<2>(cta_shape)), LayoutRight{});
 
     TiledCopy copy_A = make_tiled_copy(
         Copy_Atom<UniversalCopy<uint128_t>, float>{},
@@ -99,13 +100,14 @@ void nn(int m, int n, int k, float alpha,
         MMA_Atom<UniversalFMA<float>>{},
         make_layout(make_shape(Int<16>{}, Int<16>{})),
         Tile<
-            Layout<Shape<_16,_8>, Stride<_8,_1>>,
-            // Tile<_128,
+            // Layout<Shape<_16,_8>, Stride<_8,_1>>,
+            Layout<Shape<_32,_4>, Stride<_4,_1>>,
+            // _128,
             _128,
-            Underscore
+            _16
         >{}
     );
-    
+
     dim3 cta_dim(size(mma));
     dim3 grid_dim(size(ceil_div(m, select<0>(cta_shape))),
                   size(ceil_div(n, select<1>(cta_shape))));
@@ -130,4 +132,4 @@ void launch_sgemm_128x16_pipe(
     if (transA == 'N' && transB == 'N') {
         sgemm_128x16_pipe::nn(m, n, k, alpha, A, ldA, B, ldB, beta, C, ldC);
     }
-}
+}   
