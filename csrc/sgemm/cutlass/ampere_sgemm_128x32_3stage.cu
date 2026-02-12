@@ -57,58 +57,69 @@ __global__ void ampere_sgemm_128x32_3stage(
     auto tCsA = tC.partition_A(sA);
     auto tCsB = tC.partition_B(sB);
     auto tCgC = tC.partition_C(gC);
-    auto tCrA = make_fragment_like(tCsA(_,_,_,0));
-    auto tCrB = make_fragment_like(tCsB(_,_,_,0));
+    // auto tCrA = make_fragment_like(tCsA(_,_,_,0));
+    // auto tCrB = make_fragment_like(tCsB(_,_,_,0));
+    auto tCrA = make_fragment_like(composition(tCsA(_,_,_,0), make_shape(_,_,_2{})));      // (1,8,32) => (1,8,2)
+    auto tCrB = make_fragment_like(composition(tCsB(_,_,_,0), make_shape(_,_,_2{})));
     auto tCrC = make_fragment_like(tCgC);
     fill(tCrC, 0.0);
 
 #if 0
-    if (thread0()) {
-        print(tAgA); print("\n");
-        print(tBgB); print("\n");
-
-        print(tAsA); print("\n");
-        print(tBsB); print("\n");
-
+    if(thread0()) {
+        print(tCsA); print("\n");
         print(tCrA); print("\n");
-        print(tCrB); print("\n");
+        // print(tCsB); print("\n");
+        // print(tCgC); print("\n");
+
+        // print(tCrA); print("\n");
+        // print(tCrB); print("\n");
     }
 #endif
 
+    int block_pipe = 0;
     cp_async_wait<smem_pipes - 2>();
     __syncthreads();
     // prefetch r_block = 0
-    copy(tCsA(_,_,0,0), tCrA(_,_,0));  // (M, K, pipe)
-    copy(tCsB(_,_,0,0), tCrB(_,_,0));
+    copy(tCsA(_,_,0,0), tCrA(_,_,block_pipe));  // (M, K, pipe)
+    copy(tCsB(_,_,0,0), tCrB(_,_,block_pipe));
 
     uint pipe_read = 0;
     uint pipe_write = smem_pipes - 1;
-    constexpr uint rmem_blocks = size<2>(tCrA);
+    constexpr uint rmem_blocks = size<2>(tCsA);
     const uint k_iters = gmem_tiles + (smem_pipes - 1);
 
     for (uint iter = 0;  iter < k_iters; ++iter) {
-        if (iter < gmem_tiles) {
-            copy(copy_A, tAgA(_,_,_,gmem_tile_idx), tAsA(_,_,_,pipe_write));    
-            copy(copy_B, tBgB(_,_,_,gmem_tile_idx), tBsB(_,_,_,pipe_write));
-        }
-        cp_async_fence();
+        // if (iter < gmem_tiles) {
+        //     copy(copy_A, tAgA(_,_,_,gmem_tile_idx), tAsA(_,_,_,pipe_write));    
+        //     copy(copy_B, tBgB(_,_,_,gmem_tile_idx), tBsB(_,_,_,pipe_write));
+        // }
+        // cp_async_fence();
         cp_async_wait<smem_pipes - 2>();
         __syncthreads();
 
         CUTE_UNROLL
         for (uint block = 0; block < rmem_blocks - 1; ++block) {
-            gemm(tiled_mma, tCrA(_,_,block), tCrB(_,_,block), tCrC);
-            copy(tCsA(_,_,block+1,pipe_read), tCrA(_,_,block+1));
-            copy(tCsB(_,_,block+1,pipe_read), tCrB(_,_,block+1));
+            gemm(tiled_mma, tCrA(_,_,block_pipe), tCrB(_,_,block_pipe), tCrC);
+            block_pipe ^= 1;
+            
+            copy(tCsA(_,_,block+1,pipe_read), tCrA(_,_,block_pipe));
+            copy(tCsB(_,_,block+1,pipe_read), tCrB(_,_,block_pipe));
         }
-        gemm(tiled_mma, tCrA(_,_,rmem_blocks-1), tCrB(_,_,rmem_blocks-1), tCrC);
+        gemm(tiled_mma, tCrA(_,_,block_pipe), tCrB(_,_,block_pipe), tCrC);
+        block_pipe ^= 1;
+
+        if (iter < gmem_tiles) {
+            copy(copy_A, tAgA(_,_,_,gmem_tile_idx), tAsA(_,_,_,pipe_write));    
+            copy(copy_B, tBgB(_,_,_,gmem_tile_idx), tBsB(_,_,_,pipe_write));
+        }
+        cp_async_fence();
         
         pipe_write = pipe_read;
         pipe_read = (pipe_read + 1) % smem_pipes;
 
         if (iter != k_iters - 1) {
-            copy(tCsA(_,_,0,pipe_read), tCrA(_,_,0));
-            copy(tCsB(_,_,0,pipe_read), tCrB(_,_,0));
+            copy(tCsA(_,_,0,pipe_read), tCrA(_,_,block_pipe));
+            copy(tCsB(_,_,0,pipe_read), tCrB(_,_,block_pipe));
         }
         ++gmem_tile_idx;
     }
