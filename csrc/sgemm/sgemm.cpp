@@ -4,15 +4,18 @@
 #include <thrust/device_vector.h>
 
 #include "./cuda/naive.cu"
-#include "./cuda/smem.cu"
-#include "./cuda/onedim_tile.cu"
-#include "./cuda/twodim_tile.cu"
-#include "./cuda/vectorize.cu"
-#include "./cuda/128x128x8_cg.cu"
-#include "./cuda/128x128x16.cu"
-#include "./cuda/siboehm.cu"
+// #include "./cuda/smem.cu"
+// #include "./cuda/onedim_tile.cu"
+// #include "./cuda/twodim_tile.cu"
+// #include "./cuda/vectorize.cu"
+// #include "./cuda/128x8_cg.cu"
+#include "./cuda/128x16.cu"
+// #include "./cuda/siboehm.cu"
 
-#include "./cutlass/pipeline_nodb_g2r.cu"
+#include "./cutlass/sgemm_128x16_pipe.cu"
+#include "./cutlass/ampere_sgemm_128x32_3stage.cu"
+
+#include <cublas_v2.h>
 
 void launch_cublas(cublasHandle_t handle, int M, int N, int K, float alpha, float *A, float*B, float beta, float *C) {
     cublasGemmEx(
@@ -22,22 +25,24 @@ void launch_cublas(cublasHandle_t handle, int M, int N, int K, float alpha, floa
     );
 }
 
-void run_kernel(int kernel, int M, int N, int K, float* A, float* B, float* C, cublasHandle_t handle) {
-    // CUDA
-    if (kernel == 0) launch_naive(M, N, K, A, B, C, nullptr);
-    else if (kernel == 1) launch_smem(M, N, K, A, B, C, nullptr);
-    else if (kernel == 2) launch_onedim_threadtile(M, N, K, A, B, C, nullptr);
-    else if (kernel == 3) launch_twodim_threadtile(M, N, K, A, B, C, nullptr);
-    else if (kernel == 4) launch_vectorize(M, N, K, A, B, C, nullptr);
-    else if (kernel == 5) launch_warptile_cg(M, N, K, A, B, C, nullptr);
-    else if (kernel == 6) launch_warptile_no_cg(M, N, K, A, B, C, nullptr);
-    else if (kernel == 7) launch_siboehm(M, N, K, 1.0, A, B, 0.0, C);
-    // CUTLASS
-    else if (kernel == 8) launch_pipeline_nodb_g2r('N', 'N', N, M, K, 1.0, B, N, A, K, 0.0, C, N);
-    // else if (kernel == 8) launch_pipeline_nodb_g2r('N', 'N', M, N, K, 1.0, A, M, B, K, 0.0, C, M);
-    // cuBLAS
-    else if (kernel == 15) launch_cublas(handle, M, N, K, 1.0, A, B, 0.0, C);
-}  // TODO: maybe separate each kernel to have their own driver boilerplate--CUTLASS kernels get pretty nuanced
+namespace sgemm {
+    void run_kernel(int kernel, int M, int N, int K, float* A, float* B, float* C, cublasHandle_t handle) {
+        // CUDA
+        if (kernel == 0) launch_naive(M, N, K, A, B, C, nullptr);
+        // else if (kernel == 1) launch_smem(M, N, K, A, B, C, nullptr);
+        // else if (kernel == 2) launch_onedim_threadtile(M, N, K, A, B, C, nullptr);
+        // else if (kernel == 3) launch_twodim_threadtile(M, N, K, A, B, C, nullptr);
+        // else if (kernel == 4) launch_vectorize(M, N, K, A, B, C, nullptr);
+        // else if (kernel == 5) launch_sgemm_128x8_cg(M, N, K, A, B, C, nullptr);
+        else if (kernel == 6) launch_sgemm_128x16(M, N, K, A, B, C, nullptr);
+        // else if (kernel == 7) launch_siboehm(M, N, K, 1.0, A, B, 0.0, C);
+        // // CUTLASS
+        else if (kernel == 8) launch_sgemm_128x16_pipe('N', 'N', N, M, K, 1.0, B, N, A, K, 0.0, C, N);
+        else if (kernel == 9) launch_ampere_sgemm_128x32_3stage('N', 'N', N, M, K, 1.0, B, N, A, K, 0.0, C, N);
+        // cuBLAS
+        else if (kernel == 15) launch_cublas(handle, M, N, K, 1.0, A, B, 0.0, C);
+    }  // TODO: maybe separate each kernel to have their own driver boilerplate--CUTLASS kernels get pretty nuanced
+}  // namespace sgem
 
 int main(int argc, char** argv) {
     int kernel = 0;
@@ -81,6 +86,8 @@ int main(int argc, char** argv) {
     for (int i = 0; i < N * K; ++i) {
         hB[i] = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
     }
+    // fill_ones(hA.data(), hA.size());
+    // fill_ones(hB.data(), hB.size());
 
     auto dA = thrust::device_vector<float>(M * K);
     auto dB = thrust::device_vector<float>(K * N);
@@ -91,11 +98,11 @@ int main(int argc, char** argv) {
         cudaEvent_t start, stop;
         CUDA_CHECK(cudaEventCreate(&start));
         CUDA_CHECK(cudaEventCreate(&stop));
-        run_kernel(kernel, M, N, K, dA.data().get(), dB.data().get(), dC.data().get(), handle);
+        sgemm::run_kernel(kernel, M, N, K, dA.data().get(), dB.data().get(), dC.data().get(), handle);
 
         CUDA_CHECK(cudaEventRecord(start));
         for (int i = 0; i < trials; ++i) {
-            run_kernel(kernel, M, N, K, dA.data().get(), dB.data().get(), dC.data().get(), handle);
+            sgemm::run_kernel(kernel, M, N, K, dA.data().get(), dB.data().get(), dC.data().get(), handle);
         }
         CUDA_CHECK(cudaEventRecord(stop));
         CUDA_CHECK(cudaEventSynchronize(stop));
@@ -114,8 +121,7 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaEventDestroy(stop));
     }
 
-    // run_kernel(kernel, M, N, K, hA.data(), hB.data(), hC.data(), handle);
-    run_kernel(kernel, M, N, K, dA.data().get(), dB.data().get(), dC.data().get(), handle);
+    sgemm::run_kernel(kernel, M, N, K, dA.data().get(), dB.data().get(), dC.data().get(), handle);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
     hC = dC;
@@ -139,7 +145,8 @@ int main(int argc, char** argv) {
             auto diff = std::abs(hC[i] - hC_ref[i]);
             if (diff > delta) {
                 std::cerr << "[SGEMM]: Mismatch at (" << i / N << ", " << i % N << "), diff=" << diff << "\n";
-                std::cerr << "[SGEMM]: Expected=" << hC_ref[i] << ", Actual=" << hC[i] << "\n"; failed = true;
+                std::cerr << "[SGEMM]: Expected=" << hC_ref[i] << ", Actual=" << hC[i] << "\n";
+                failed = true;
             }
         }
         if (failed) return 1;
