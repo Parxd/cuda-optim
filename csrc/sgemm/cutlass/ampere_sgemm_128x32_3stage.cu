@@ -67,9 +67,8 @@ __global__ void ampere_sgemm_128x32_3stage(
 #if 0
     if(thread0()) {
         print(tCsA); print("\n");
-        print(tCrA); print("\n");
-        // print(tCsB); print("\n");
-        // print(tCgC); print("\n");
+        print(tCsB); print("\n");
+        print(tCgC); print("\n");
 
         // print(tCrA); print("\n");
         // print(tCrB); print("\n");
@@ -89,11 +88,6 @@ __global__ void ampere_sgemm_128x32_3stage(
     const uint k_iters = gmem_tiles + (smem_pipes - 1);
 
     for (uint iter = 0;  iter < k_iters; ++iter) {
-        // if (iter < gmem_tiles) {
-        //     copy(copy_A, tAgA(_,_,_,gmem_tile_idx), tAsA(_,_,_,pipe_write));    
-        //     copy(copy_B, tBgB(_,_,_,gmem_tile_idx), tBsB(_,_,_,pipe_write));
-        // }
-        // cp_async_fence();
         cp_async_wait<smem_pipes - 2>();
         __syncthreads();
 
@@ -160,7 +154,18 @@ void nn(int m, int n, int k, float alpha,
     );
     auto mma = make_tiled_mma(
         MMA_Atom<UniversalFMA<float>>{},
-        make_layout(make_shape(Int<16>{}, Int<16>{}))
+        make_layout(make_shape(Int<16>{}, Int<16>{})),
+        Tile<
+            /*
+            remapping m-coords:
+            0, 1, ..., 15, 16, ...
+            0, 4, ..., 1,  5,  ...
+            */
+            Layout<Shape<_16,_4,_2>, Stride<_4,_1,_64>>,
+            // _128,
+            _128,
+            _32
+        >{}
     );
 
     auto kernel = ampere_sgemm_128x32_3stage<decltype(stride_A), decltype(stride_B), decltype(stride_C),
@@ -187,4 +192,9 @@ void launch_ampere_sgemm_128x32_3stage(
     if (transA == 'N' && transB == 'N') {
         ampere_sgemm_128x32_3stage::nn(m, n, k, alpha, A, ldA, B, ldB, beta, C, ldC);
     }
+    // using namespace cute;
+    // auto lt = make_layout(make_shape(16, 4, 2), make_stride(4, 1, 64));
+    // for (int i = 0; i < 128; ++i) {
+    //     printf("%d: %d\n", i, lt(i));
+    // }
 }
