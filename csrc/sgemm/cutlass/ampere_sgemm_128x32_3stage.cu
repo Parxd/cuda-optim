@@ -1,5 +1,7 @@
+#include "cute/arch/copy.hpp"
 #include "cute/arch/copy_sm80.hpp"
 #include "cute/layout.hpp"
+#include "cute/tensor_impl.hpp"
 #include <cute/tensor.hpp>
 
 namespace ampere_sgemm_128x32_3stage {
@@ -16,6 +18,8 @@ __global__ void ampere_sgemm_128x32_3stage(
     copyPolicyA copy_A, copyPolicyB copy_B, mmaPolicy tiled_mma
 ) {
     using namespace cute;
+    using blockPipes = _2;  // num. of block buffers
+    using pipeSize = _2;  // size of block in K-axis
 
     // opt for dynamic smem size here due to 48kb limitation on static alloc
     extern __shared__ float smem_buffer[];
@@ -57,10 +61,8 @@ __global__ void ampere_sgemm_128x32_3stage(
     auto tCsA = tC.partition_A(sA);
     auto tCsB = tC.partition_B(sB);
     auto tCgC = tC.partition_C(gC);
-    // auto tCrA = make_fragment_like(tCsA(_,_,_,0));
+    // auto tCrA = make_fragment_like(tCsB(_,_,_,0));
     // auto tCrB = make_fragment_like(tCsB(_,_,_,0));
-    auto tCrA = make_fragment_like(composition(tCsA(_,_,_,0), make_shape(_,_,_2{})));      // (1,8,32) => (1,8,2)
-    auto tCrB = make_fragment_like(composition(tCsB(_,_,_,0), make_shape(_,_,_2{})));
     auto tCrC = make_fragment_like(tCgC);
     fill(tCrC, 0.0);
 
@@ -68,12 +70,14 @@ __global__ void ampere_sgemm_128x32_3stage(
     if(thread0()) {
         print(tCsA); print("\n");
         print(tCsB); print("\n");
-        print(tCgC); print("\n");
-
-        // print(tCrA); print("\n");
-        // print(tCrB); print("\n");
+        print(tCrA); print("\n");
+        print(tCrB); print("\n");
     }
 #endif
+
+#if 0
+    auto tCrA = make_fragment_like(composition(tCsA(_,_,_,0), make_shape(_,_,_2{})));
+    auto tCrB = make_fragment_like(composition(tCsB(_,_,_,0), make_shape(_,_,_2{})));
 
     int block_pipe = 0;
     cp_async_wait<smem_pipes - 2>();
@@ -96,7 +100,7 @@ __global__ void ampere_sgemm_128x32_3stage(
             gemm(tiled_mma, tCrA(_,_,block_pipe), tCrB(_,_,block_pipe), tCrC);
             block_pipe ^= 1;
             
-            copy(tCsA(_,_,block+1,pipe_read), tCrA(_,_,block_pipe));
+            copy(tCsA(_,_,block+1,pipe_read), tCrA(_,_,block_pipe));  // call this before the gemm to interleave?
             copy(tCsB(_,_,block+1,pipe_read), tCrB(_,_,block_pipe));
         }
         gemm(tiled_mma, tCrA(_,_,block_pipe), tCrB(_,_,block_pipe), tCrC);
@@ -118,6 +122,75 @@ __global__ void ampere_sgemm_128x32_3stage(
         ++gmem_tile_idx;
     }
     axpby(alpha, tCrC, beta, tCgC);
+#endif
+
+/*
+Optimization 1: Vectorized 64-bit loads for B matrix in K-axis 
+*/
+#if 1
+    auto tCrA = make_tensor<float>(
+        make_layout(
+            make_shape(_1{}, size<1>(tCsA), pipeSize{}, blockPipes{}),
+            make_stride(_0{}, _1{}, size<1>(tCsA), size<1>(tCsA) * pipeSize{})
+        )
+    );  // (1, blockM, BlockPipeSizeK, RestBlockPipesK)
+    auto tCrB = make_tensor<float>(
+        make_layout(
+            make_shape(_1{}, size<1>(tCsB), pipeSize{}, blockPipes{}),
+            make_stride(_0{}, pipeSize{}, _1{}, size<1>(tCsB) * pipeSize{})
+        )
+    );  // (1, blockN, BlockPipeSizeK, RestBlockPipesK)
+
+    auto s2r_copy_B = AutoVectorizingCopyWithAssumedAlignment<pipeSize{} * sizeof(float) * 8>{};
+    auto tCsA_block = logical_divide(tCsA, make_shape(_,_,pipeSize{},_));  // (1, (CopyMVector, NumCopyMVectors), (BlockPipeSizeK, RestBlockPipesK), SmemPipes)
+    auto tCsB_block = logical_divide(tCsB, make_shape(_,_,pipeSize{},_));  // (1, CopyN, (BlockPipeSizeK, RestBlockPipesK), SmemPipes)
+
+    int block_pipe = 0;
+    cp_async_wait<smem_pipes - 2>();
+    __syncthreads();
+    // prefetch r_block = 0
+    // copy(tCsA(_,_,0,0), tCrA(_,_,block_pipe));  // (M, K, pipe)
+    // copy(tCsB(_,_,0,0), tCrB(_,_,block_pipe));  // (N, K, pipe)
+    copy(            tCsA_block(_,_,make_coord(_,0),0), tCrA(_,_,_,block_pipe));
+    copy(s2r_copy_B, tCsB_block(_,_,make_coord(_,0),0), tCrB(_,_,_,block_pipe));
+
+    uint pipe_read = 0;
+    uint pipe_write = smem_pipes - 1;
+    constexpr uint rmem_blocks = size<2>(tCsA);
+    const uint k_iters = gmem_tiles + (smem_pipes - 1);
+
+    for (uint iter = 0;  iter < k_iters; ++iter) {
+        cp_async_wait<smem_pipes - 2>();
+        __syncthreads();
+
+        CUTE_UNROLL
+        for (uint block = 0; block < (rmem_blocks / pipeSize{}) - 1; ++block) {
+            gemm(tiled_mma, tCrA(_,_,_,block_pipe), tCrB(_,_,_,block_pipe), tCrC);
+            block_pipe ^= 1;
+            
+            copy(tCsA_block(_,_,make_coord(_,block+1),pipe_read), tCrA(_,_,_,block_pipe));  // call this before the gemm to interleave?
+            copy(tCsB_block(_,_,make_coord(_,block+1),pipe_read), tCrB(_,_,_,block_pipe));
+        }
+        gemm(tiled_mma, tCrA(_,_,_,block_pipe), tCrB(_,_,_,block_pipe), tCrC);
+        block_pipe ^= 1;
+
+        if (iter < gmem_tiles) {
+            copy(copy_A, tAgA(_,_,_,gmem_tile_idx), tAsA(_,_,_,pipe_write));    
+            copy(copy_B, tBgB(_,_,_,gmem_tile_idx), tBsB(_,_,_,pipe_write));
+        }
+        cp_async_fence();
+        
+        pipe_write = pipe_read;
+        pipe_read = (pipe_read + 1) % smem_pipes;
+
+        if (iter != k_iters - 1) {
+            copy(tCsA_block(_,_,make_coord(_,0),pipe_read), tCrA(_,_,_,block_pipe));
+            copy(tCsB_block(_,_,make_coord(_,0),pipe_read), tCrB(_,_,_,block_pipe));
+        }
+        ++gmem_tile_idx;
+    }
+    axpby(alpha, tCrC, beta, tCgC);
+#endif
 }
 
 void nn(int m, int n, int k, float alpha,
@@ -156,11 +229,6 @@ void nn(int m, int n, int k, float alpha,
         MMA_Atom<UniversalFMA<float>>{},
         make_layout(make_shape(Int<16>{}, Int<16>{})),
         Tile<
-            /*
-            remapping m-coords:
-            0, 1, ..., 15, 16, ...
-            0, 4, ..., 1,  5,  ...
-            */
             Layout<Shape<_16,_4,_2>, Stride<_4,_1,_64>>,
             // _128,
             _128,
@@ -169,8 +237,8 @@ void nn(int m, int n, int k, float alpha,
     );
 
     auto kernel = ampere_sgemm_128x32_3stage<decltype(stride_A), decltype(stride_B), decltype(stride_C),
-                                              decltype(sA_layout), decltype(sB_layout), decltype(cta_shape),
-                                              decltype(copy_A), decltype(copy_B), decltype(mma)>;
+                                             decltype(sA_layout), decltype(sB_layout), decltype(cta_shape),
+                                             decltype(copy_A), decltype(copy_B), decltype(mma)>;
     cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size);
     cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, 100);
 
@@ -192,9 +260,13 @@ void launch_ampere_sgemm_128x32_3stage(
     if (transA == 'N' && transB == 'N') {
         ampere_sgemm_128x32_3stage::nn(m, n, k, alpha, A, ldA, B, ldB, beta, C, ldC);
     }
-    // using namespace cute;
+    using namespace cute;
     // auto lt = make_layout(make_shape(16, 4, 2), make_stride(4, 1, 64));
     // for (int i = 0; i < 128; ++i) {
     //     printf("%d: %d\n", i, lt(i));
     // }
+
+    // float* ptr;
+    // auto tensor = make_tensor(ptr, make_layout(make_shape(1, make_shape(4, 2), 32, 3), make_stride(0, 512, 1, 4096)));
+    // print(logical_divide(tensor, make_shape(_,_,2,_))); print("\n");
 }
