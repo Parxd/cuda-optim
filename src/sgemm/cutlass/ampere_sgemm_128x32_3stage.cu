@@ -3,6 +3,7 @@
 #include "cute/layout.hpp"
 #include "cute/tensor_impl.hpp"
 #include "cute/underscore.hpp"
+#include "cute/util/print_latex.hpp"
 #include <cute/tensor.hpp>
 
 namespace ampere_sgemm_128x32_3stage {
@@ -67,10 +68,14 @@ __global__ void ampere_sgemm_128x32_3stage(
     auto tCrC = make_fragment_like(tCgC);
     fill(tCrC, 0.0);
 
-#if 1
+#if 0
     if(thread0()) {
-        print(copy_A.tidfrg_S(sA)); print("\n");
-        print(copy_B.tidfrg_S(sB)); print("\n");
+        // print(copy_A.tidfrg_D(sA)); print("\n");
+        // print(copy_B.tidfrg_S(sB)); print("\n");
+        // print(tiled_mma.thrfrg_A(sA)); print("\n");
+        // print(tiled_mma.thrfrg_B(sB)); print("\n");
+        // print(tiled_mma.thrfrg_C(gC)); print("\n");
+        print(tCsA(_,_,_,0));
     }
 #endif
 
@@ -91,8 +96,11 @@ __global__ void ampere_sgemm_128x32_3stage(
     const uint k_iters = gmem_tiles + (smem_pipes - 1);
 
     for (uint iter = 0;  iter < k_iters; ++iter) {
-        cp_async_wait<smem_pipes - 2>();
-        __syncthreads();
+        if (iter < gmem_tiles) {
+            copy(copy_A, tAgA(_,_,_,gmem_tile_idx), tAsA(_,_,_,pipe_write));    
+            copy(copy_B, tBgB(_,_,_,gmem_tile_idx), tBsB(_,_,_,pipe_write));
+        }
+        cp_async_fence();
 
         CUTE_UNROLL
         for (uint block = 0; block < rmem_blocks - 1; ++block) {
@@ -103,15 +111,12 @@ __global__ void ampere_sgemm_128x32_3stage(
         }
         gemm(tiled_mma, tCrA(_,_,block_pipe), tCrB(_,_,block_pipe), tCrC);
         block_pipe ^= 1;
-
-        if (iter < gmem_tiles) {
-            copy(copy_A, tAgA(_,_,_,gmem_tile_idx), tAsA(_,_,_,pipe_write));    
-            copy(copy_B, tBgB(_,_,_,gmem_tile_idx), tBsB(_,_,_,pipe_write));
-        }
-        cp_async_fence();
         
         pipe_write = pipe_read;
         pipe_read = (pipe_read + 1) % smem_pipes;
+
+        cp_async_wait<smem_pipes - 2>();
+        __syncthreads();
 
         if (iter != k_iters - 1) {
             copy(tCsA(_,_,0,pipe_read), tCrA(_,_,block_pipe));
@@ -240,6 +245,7 @@ void nn(int m, int n, int k, float alpha,
     auto sB_layout_swizzled = composition(Swizzle<1,2,3>{}, sB_layout);
     auto mma = make_tiled_mma(
         MMA_Atom<UniversalFMA<float>>{},
+        // Layout<Shape<_16,_16>>{}
         Layout<Shape<_16,_16>>{},
         Tile<
             Layout<Shape<_16,_4,_2>, Stride<_4,_1,_64>>,
